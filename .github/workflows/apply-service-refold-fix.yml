@@ -4,17 +4,21 @@ on:
   push:
     branches:
       - fix/v1.4.8-service-refold-pruned-horizon
+  pull_request:
+    branches:
+      - master
 
 permissions:
   contents: write
 
 jobs:
   apply-fix:
-    if: ${{ !contains(github.event.head_commit.message, '[service-refold-applied]') }}
+    if: ${{ github.event_name == 'pull_request' || !contains(github.event.head_commit.message, '[service-refold-applied]') }}
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
         with:
+          ref: fix/v1.4.8-service-refold-pruned-horizon
           fetch-depth: 0
 
       - name: Apply staged patch
@@ -42,4 +46,4 @@ jobs:
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add consensus/src/pipeline/virtual_processor/service_bond.rs
           git commit -m "fix(consensus): replay finalized service history safely [service-refold-applied]"
-          git push
+          git push origin HEAD:fix/v1.4.8-service-refold-pruned-horizon
