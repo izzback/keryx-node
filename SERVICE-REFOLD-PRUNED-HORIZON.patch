@@ -1,0 +1,139 @@
+diff --git a/consensus/src/pipeline/virtual_processor/service_bond.rs b/consensus/src/pipeline/virtual_processor/service_bond.rs
+index 05aeaab..0000000 100644
+--- a/consensus/src/pipeline/virtual_processor/service_bond.rs
++++ b/consensus/src/pipeline/virtual_processor/service_bond.rs
+@@ -8,8 +8,8 @@ use crate::model::stores::{
+ use keryx_consensus_core::collateral::{
+     eligible_pairs, escrow_miner_key, miner_key, verify_responder_signature, EscrowClaim, FoldOutcome, ServiceLedger, ServiceMiss,
+     ServicePenalty, ServiceStrikesSnapshot, StrikeEntry, SERVICE_BURNABLE_WINDOW_DAA, SERVICE_ELIGIBILITY_WINDOW_DAA,
+-    SERVICE_ELIGIBILITY_WINDOW_DAA_V2, SERVICE_SUSPENSION_DAA,
++    SERVICE_ELIGIBILITY_WINDOW_DAA_V2, SERVICE_LEDGER_HORIZON_DAA, SERVICE_SUSPENSION_DAA,
+ };
+ use keryx_consensus_core::config::params::POM_TIERS_H6;
+ use keryx_consensus_core::tx::TransactionOutpoint;
+@@ -174,6 +174,25 @@ fn log_new_service_misses(
+     }
+ }
+ 
++#[derive(Clone, Copy, Debug, PartialEq, Eq)]
++enum ServiceReplayMode {
++    /// Finalized history older than any request/response state the ledger can still remember.
++    /// Only the burnable escrow vault must be reconstructed here.
++    VaultOnly,
++    /// Finalized history close enough to the persisted frontier that request/audit state may
++    /// still be live there. Rebuild it, but never emit strike effects a second time.
++    Warmup,
++    /// At or above the persisted frontier: derive events normally and queue them for finality.
++    Active,
++}
++
++fn service_replay_mode(daa: u64, cursor_daa: u64) -> ServiceReplayMode {
++    if cursor_daa == 0 || daa >= cursor_daa {
++        ServiceReplayMode::Active
++    } else if daa < cursor_daa.saturating_sub(SERVICE_LEDGER_HORIZON_DAA) {
++        ServiceReplayMode::VaultOnly
++    } else {
++        ServiceReplayMode::Warmup
++    }
++}
++
+ impl VirtualStateProcessor {
+@@ -425,6 +444,28 @@ impl VirtualStateProcessor {
+         }
+     }
+ 
++    /// Rehydrates only the still-burnable escrow vault for finalized history that is older than
++    /// [`SERVICE_LEDGER_HORIZON_DAA`]. Requests, responses and cohorts from this region are already
++    /// forgotten by the canonical ledger at `deep_cursor_daa`; their strike/sighting effects are
++    /// finality-persisted in the imported baseline. Replaying them would be both redundant and,
++    /// during fresh IBD, potentially impossible after their cohort window has crossed pruning.
++    fn warmup_service_vault_only(&self, ledger: &mut ServiceLedger, hash: Hash) {
++        let daa = self.headers_store.get_daa_score(hash).unwrap();
++        if !self.pom_v3_activation.is_active(daa) {
++            return;
++        }
++        let escrows = self.service_escrows_of_chain_block(hash);
++        let burned = self.service_burned.read();
++        ledger.on_chain_block_warmup(
++            daa,
++            &[],
++            &[],
++            &escrows,
++            &|op| burned.contains(op),
++            |_| unreachable!("vault-only service refold must never resolve a cohort"),
++        );
++    }
++
+     /// Whether `identity` is in standing at `pov_daa` — sighted at the lagged anchor, and
+     /// strike-free there too before the v2 gate. Pure function of finality-flushed rows plus
+     /// the POV daa; identical on every node at every POV.
+@@ -506,11 +547,21 @@ impl VirtualStateProcessor {
+             let hash = sc.get_by_index(i).unwrap();
+             let daa = self.headers_store.get_daa_score(hash).unwrap();
+-            // Strictly below the frontier: fully persisted. AT the frontier: re-derived and
+-            // re-queued — a crash may have flushed that daa partially, and the flush itself is
+-            // idempotent (already-mirrored rows are skipped).
+-            let warmup = daa < cursor_daa;
++            let mode = service_replay_mode(daa, cursor_daa);
++            if mode == ServiceReplayMode::VaultOnly {
++                self.warmup_service_vault_only(&mut ledger, hash);
++                continue;
++            }
++            // Strictly below the frontier but inside the request horizon: reconstruct transient
++            // request/audit state while suppressing already-persisted strike effects. AT the
++            // frontier: re-derive and re-queue — a crash may have flushed that daa partially,
++            // and the flush itself is idempotent (already-mirrored rows are skipped).
++            let warmup = mode == ServiceReplayMode::Warmup;
+             let (outcome, _added) = self.fold_service_chain_block(&mut ledger, sc, hash, pruning_point, false, warmup);
+             log_new_service_misses(logged, daa, &outcome.misses);
+-            if daa >= cursor_daa {
++            if mode == ServiceReplayMode::Active {
+                 // Sightings first: a partially flushed daa must never persist a claim's burn
+                 // before its identity's sighting.
+                 for miner in outcome.sightings {
+@@ -580,8 +631,24 @@ impl VirtualStateProcessor {
+         sync.undo.split_off(&(common + 1));
+         for (k, h) in chain_path.added.iter().enumerate() {
+             let idx = common + 1 + k as u64;
+             let daa = self.headers_store.get_daa_score(*h).unwrap();
++            match service_replay_mode(daa, sync.deep_cursor_daa) {
++                ServiceReplayMode::VaultOnly => {
++                    // Fresh IBD can advance pruning ahead of the virtual processor. Finalized
++                    // requests this old are already represented by the imported service baseline;
++                    // only their surviving escrow claims are needed by later active folds.
++                    self.warmup_service_vault_only(&mut sync.ledger, *h);
++                    continue;
++                }
++                ServiceReplayMode::Warmup => {
++                    // Still inside the request-state horizon, so rebuild pending audits exactly,
++                    // but do not replay their already-finalized strike/burn effects.
++                    let _ = self.fold_service_chain_block(&mut sync.ledger, &*sc, *h, pruning_point, false, true);
++                    continue;
++                }
++                ServiceReplayMode::Active => {}
++            }
+             let (outcome, added) = self.fold_service_chain_block(&mut sync.ledger, &*sc, *h, pruning_point, true, false);
+             log_new_service_misses(&mut sync.logged, daa, &outcome.misses);
+             sync.undo.insert(idx, VaultUndo { added, misses: outcome.misses.clone(), expired: outcome.expired });
+@@ -797,6 +864,21 @@ mod tests {
+     use keryx_consensus_core::collateral::RESPONDER_SIG_DOMAIN;
+     use keryx_inference::AiResponder;
+ 
++    #[test]
++    fn service_replay_mode_separates_finalized_history_from_live_state() {
++        let cursor = 1_000_000;
++        let floor = cursor - SERVICE_LEDGER_HORIZON_DAA;
++
++        assert_eq!(service_replay_mode(floor - 1, cursor), ServiceReplayMode::VaultOnly);
++        assert_eq!(service_replay_mode(floor, cursor), ServiceReplayMode::Warmup);
++        assert_eq!(service_replay_mode(cursor - 1, cursor), ServiceReplayMode::Warmup);
++        assert_eq!(service_replay_mode(cursor, cursor), ServiceReplayMode::Active);
++        assert_eq!(service_replay_mode(cursor + 1, cursor), ServiceReplayMode::Active);
++
++        // No persisted baseline: the whole retained span must be derived normally.
++        assert_eq!(service_replay_mode(1, 0), ServiceReplayMode::Active);
++    }
++
+     fn signed_response(seckey: &[u8; 32], tamper: bool) -> AiResponsePayload {
+         let keypair = secp256k1::Keypair::from_seckey_slice(secp256k1::SECP256K1, seckey).unwrap();
+         let mut resp = AiResponsePayload::new([7u8; 32], 900_000, [0x12u8; 34], 128);
