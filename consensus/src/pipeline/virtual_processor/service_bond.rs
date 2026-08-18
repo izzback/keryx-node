@@ -287,7 +287,7 @@ impl VirtualStateProcessor {
                     }
                 } else if tx.is_ai_response() {
                     if let Some(resp) = AiResponsePayload::deserialize(&tx.payload) {
-                        responses.push((resp.request_hash, verified_responder(&resp)));
+                        responses.push((resp.request_hash, verified_responder(&resp));
                     }
                 }
             }
@@ -649,7 +649,7 @@ impl VirtualStateProcessor {
                 sync.queue.push_back((idx, daa, ServiceEvent::Miss(miss)));
             }
             for (miner, preserved) in outcome.resets {
-                sync.queue.push_back((idx, daa, ServiceEvent::Reset(miner, preserved));
+                sync.queue.push_back((idx, daa, ServiceEvent::Reset(miner, preserved)));
             }
             let snapshot = sync.ledger.light_snapshot();
             sync.snapshots.insert(idx, snapshot);
