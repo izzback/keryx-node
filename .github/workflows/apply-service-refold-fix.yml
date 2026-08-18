@@ -1,0 +1,45 @@
+name: Apply service refold fix
+
+on:
+  push:
+    branches:
+      - fix/v1.4.8-service-refold-pruned-horizon
+
+permissions:
+  contents: write
+
+jobs:
+  apply-fix:
+    if: ${{ !contains(github.event.head_commit.message, '[service-refold-applied]') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Apply staged patch
+        shell: bash
+        run: |
+          git apply --check SERVICE-REFOLD-PRUNED-HORIZON.patch
+          git apply SERVICE-REFOLD-PRUNED-HORIZON.patch
+
+      - name: Format
+        run: cargo fmt --all
+
+      - name: Unit regression
+        run: cargo test -p keryx-consensus service_replay_mode_separates_finalized_history_from_live_state --lib
+
+      - name: Diff sanity
+        shell: bash
+        run: |
+          git diff --check
+          git diff --exit-code -- SERVICE-REFOLD-PRUNED-HORIZON.patch .github/workflows/apply-service-refold-fix.yml
+
+      - name: Commit verified source change
+        shell: bash
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add consensus/src/pipeline/virtual_processor/service_bond.rs
+          git commit -m "fix(consensus): replay finalized service history safely [service-refold-applied]"
+          git push
