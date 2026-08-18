@@ -1,23 +1,21 @@
 use super::VirtualStateProcessor;
-use crate::processes::service_commit;
 use crate::model::stores::{
     acceptance_data::AcceptanceDataStoreReader, block_transactions::BlockTransactionsStoreReader, daa::DaaStoreReader,
-    ghostdag::GhostdagStoreReader, headers::HeaderStoreReader, pruning::PruningStoreReader,
-    selected_chain::SelectedChainStoreReader,
+    ghostdag::GhostdagStoreReader, headers::HeaderStoreReader, pruning::PruningStoreReader, selected_chain::SelectedChainStoreReader,
 };
+use crate::processes::service_commit;
+use keryx_consensus_core::ChainPath;
 use keryx_consensus_core::collateral::{
-    eligible_pairs, escrow_miner_key, miner_key, verify_responder_signature, EscrowClaim, FoldOutcome, ServiceLedger, ServiceMiss,
-    ServicePenalty, ServiceStrikesSnapshot, StrikeEntry, SERVICE_BURNABLE_WINDOW_DAA, SERVICE_ELIGIBILITY_WINDOW_DAA,
-    SERVICE_ELIGIBILITY_WINDOW_DAA_V2, SERVICE_LEDGER_HORIZON_DAA, SERVICE_SUSPENSION_DAA,
+    EscrowClaim, FoldOutcome, SERVICE_BURNABLE_WINDOW_DAA, SERVICE_ELIGIBILITY_WINDOW_DAA, SERVICE_ELIGIBILITY_WINDOW_DAA_V2,
+    SERVICE_LEDGER_HORIZON_DAA, SERVICE_SUSPENSION_DAA, ServiceLedger, ServiceMiss, ServicePenalty, ServiceStrikesSnapshot,
+    StrikeEntry, eligible_pairs, escrow_miner_key, miner_key, verify_responder_signature,
 };
 use keryx_consensus_core::config::params::POM_TIERS_H6;
 use keryx_consensus_core::tx::TransactionOutpoint;
-use keryx_consensus_core::ChainPath;
 use keryx_core::{info, warn};
 use keryx_hashes::Hash;
 use keryx_inference::{AiRequestPayload, AiResponsePayload};
 use keryx_txscript::script_class::ScriptClass;
-
 
 /// The escrow pubkey locked by a CSV escrow script, if the script is one.
 fn csv_escrow_pubkey(script: &[u8]) -> Option<[u8; 32]> {
@@ -154,11 +152,7 @@ pub(super) struct ServiceLedgerSync {
 }
 
 /// Logs the misses of one fold that have not been logged yet.
-fn log_new_service_misses(
-    logged: &mut std::collections::HashMap<(Hash, [u8; 32], u32), u64>,
-    daa: u64,
-    misses: &[ServiceMiss],
-) {
+fn log_new_service_misses(logged: &mut std::collections::HashMap<(Hash, [u8; 32], u32), u64>, daa: u64, misses: &[ServiceMiss]) {
     for miss in misses.iter() {
         if logged.insert((miss.miner, miss.request_hash, miss.consecutive_misses), daa).is_some() {
             continue;
@@ -287,7 +281,7 @@ impl VirtualStateProcessor {
                     }
                 } else if tx.is_ai_response() {
                     if let Some(resp) = AiResponsePayload::deserialize(&tx.payload) {
-                        responses.push((resp.request_hash, verified_responder(&resp));
+                        responses.push((resp.request_hash, verified_responder(&resp)));
                     }
                 }
             }
@@ -405,13 +399,7 @@ impl VirtualStateProcessor {
         };
         if live && !requests.is_empty() {
             for (rh, tier, max_tokens) in requests.iter() {
-                info!(
-                    "service-bond: request {} accepted at daa {}, tier {}, max_tokens {}",
-                    hex::encode(rh),
-                    daa,
-                    tier,
-                    max_tokens
-                );
+                info!("service-bond: request {} accepted at daa {}, tier {}, max_tokens {}", hex::encode(rh), daa, tier, max_tokens);
             }
         }
         let eligibility_window = if self.service_bond_v2_activation.is_active(daa) {
@@ -432,8 +420,7 @@ impl VirtualStateProcessor {
             ledger.on_chain_block_warmup(daa, &requests, &responses, &escrows, &|op| burned.contains(op), cohort);
             (FoldOutcome::default(), escrows)
         } else {
-            let outcome =
-                ledger.on_chain_block(daa, &requests, &responses, &escrows, |id| self.service_standing_at(id, daa), cohort);
+            let outcome = ledger.on_chain_block(daa, &requests, &responses, &escrows, |id| self.service_standing_at(id, daa), cohort);
             (outcome, escrows)
         }
     }
@@ -450,14 +437,9 @@ impl VirtualStateProcessor {
         }
         let escrows = self.service_escrows_of_chain_block(hash);
         let burned = self.service_burned.read();
-        ledger.on_chain_block_warmup(
-            daa,
-            &[],
-            &[],
-            &escrows,
-            &|op| burned.contains(op),
-            |_| unreachable!("vault-only service refold must never resolve a cohort"),
-        );
+        ledger.on_chain_block_warmup(daa, &[], &[], &escrows, &|op| burned.contains(op), |_| {
+            unreachable!("vault-only service refold must never resolve a cohort")
+        });
     }
 
     /// Whether `identity` is in standing at `pov_daa` — sighted at the lagged anchor, and
@@ -484,11 +466,7 @@ impl VirtualStateProcessor {
         }
         while lo < hi {
             let mid = lo + (hi - lo + 1) / 2;
-            if daa_at(mid) <= bound_daa {
-                lo = mid
-            } else {
-                hi = mid - 1
-            }
+            if daa_at(mid) <= bound_daa { lo = mid } else { hi = mid - 1 }
         }
         lo
     }
@@ -514,9 +492,8 @@ impl VirtualStateProcessor {
         };
         let to_daa = self.headers_store.get_daa_score(to_hash).unwrap();
         ledger.set_base(std::sync::Arc::new(self.load_strike_base()));
-        ledger.set_first_seen_base(std::sync::Arc::new(
-            self.service_standing.read().first_seen.iter().map(|(k, v)| (*k, *v)).collect(),
-        ));
+        ledger
+            .set_first_seen_base(std::sync::Arc::new(self.service_standing.read().first_seen.iter().map(|(k, v)| (*k, *v)).collect()));
         // One burnable window below the persisted frontier keeps every pending request and vault
         // claim readable at the frontier warm. A frontier of zero (nothing persisted yet) falls
         // back to the finality anchor: everything above it is re-derived.
@@ -704,12 +681,7 @@ impl VirtualStateProcessor {
                         ));
                     }
                     if !miss.burned.is_empty() {
-                        info!(
-                            "service-bond: burn FINAL for miner {} — {} claims, miss daa {}",
-                            miss.miner,
-                            miss.burned.len(),
-                            daa
-                        );
+                        info!("service-bond: burn FINAL for miner {} — {} claims, miss daa {}", miss.miner, miss.burned.len(), daa);
                     }
                     // Mirror the fold: an executed suspension logs as `{0, daa}` — the streak
                     // restarts, the daa keeps the rate-limit armed and re-derives the deadline.
@@ -720,7 +692,12 @@ impl VirtualStateProcessor {
                     };
                     if self.service_standing.write().record_strike(miss.miner, daa, record.count, record.last_daa) {
                         self.service_strike_store.set(daa, miss.miner, record).unwrap();
-                        self.service_commit_index.add_row(&service_commit::strike_row_bytes(daa, miss.miner, record.count, record.last_daa));
+                        self.service_commit_index.add_row(&service_commit::strike_row_bytes(
+                            daa,
+                            miss.miner,
+                            record.count,
+                            record.last_daa,
+                        ));
                     }
                     // A third strike, now reorg-immune, suspends the miner's production. The
                     // deadline is derived from the miss's own daa (deterministic), and the full
