@@ -1,0 +1,42 @@
+name: ServiceBurn Dump Windows
+
+on:
+  push:
+    branches:
+      - diagnostic/service-burn-dump
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: windows-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: "1.88.0"
+
+      - name: Rust cache
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: ". -> target"
+
+      - name: Build read-only dump tool
+        shell: pwsh
+        run: cargo build -p keryx-database --example service_burn_dump --release
+
+      - name: Stage artifact
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force dist | Out-Null
+          Copy-Item target\release\examples\service_burn_dump.exe dist\service-burn-dump.exe
+          Get-FileHash dist\service-burn-dump.exe -Algorithm SHA256 | Format-List | Out-File dist\SHA256.txt
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: service-burn-dump-win64
+          path: dist\*
+          if-no-files-found: error
