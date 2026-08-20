@@ -63,10 +63,18 @@ impl IbdFlow {
         let mut negotiation_zoom_counts = 0;
         let mut initial_locator_len = locator_hashes.len();
         loop {
+            // Locator size is bounded to 64. Query all statuses under one blocking consensus call
+            // instead of paying one Tokio spawn_blocking transition per hash on every zoom step.
+            let hashes = locator_hashes.clone();
+            let statuses = consensus
+                .clone()
+                .spawn_blocking(move |c| hashes.into_iter().map(|hash| (hash, c.get_block_status(hash))).collect::<Vec<_>>())
+                .await;
+
             let mut lowest_unknown_syncer_chain_hash: Option<Hash> = None;
             let mut current_highest_known_syncer_chain_hash: Option<Hash> = None;
-            for &syncer_chain_hash in locator_hashes.iter() {
-                match consensus.async_get_block_status(syncer_chain_hash).await {
+            for (syncer_chain_hash, status) in statuses {
+                match status {
                     None => {
                         // Log the unknown block and continue to the next iteration
                         lowest_unknown_syncer_chain_hash = Some(syncer_chain_hash);
