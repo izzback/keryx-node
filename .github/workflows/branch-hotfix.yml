@@ -1,0 +1,86 @@
+name: Branch Hotfix
+
+on:
+  push:
+    branches:
+      - fix/ibd-resilience-v151
+
+permissions:
+  contents: write
+
+jobs:
+  apply-hotfix:
+    if: github.event.head_commit.message != 'fix(ci): repair v1.5.1 integration coverage'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout branch
+        uses: actions/checkout@v4
+        with:
+          ref: fix/ibd-resilience-v151
+          fetch-depth: 0
+
+      - name: Apply compile fixes
+        shell: python
+        run: |
+          from pathlib import Path
+
+          consensus = Path('testing/integration/src/consensus_integration_tests.rs')
+          text = consensus.read_text()
+          duplicate = 'use keryx_consensus_core::config::params::ForkActivation;\n'
+          if duplicate in text:
+              text = text.replace(duplicate, '', 1)
+          old = '            pom_final_state: 0,\n        };'
+          new = '            pom_final_state: 0,\n            service_state_hash: 0.into(),\n            pom_tier: 0,\n        };'
+          if old in text:
+              text = text.replace(old, new, 1)
+          elif '            service_state_hash: 0.into(),\n            pom_tier: 0,' not in text:
+              raise SystemExit('fake genesis Header initializer anchor not found')
+          consensus.write_text(text)
+
+          rpc = Path('testing/integration/src/rpc_tests.rs')
+          text = rpc.read_text()
+          if 'KaspadPayloadOps::GetUtxoEntriesByOutpoints =>' not in text:
+              anchor = '            KaspadPayloadOps::GetBalanceByAddress => {'
+              addition = '''            KaspadPayloadOps::GetUtxoEntriesByOutpoints => {
+                let rpc_client = client.clone();
+                tst!(op, {
+                    let response = rpc_client
+                        .get_utxo_entries_by_outpoints_call(None, GetUtxoEntriesByOutpointsRequest::new(vec![]))
+                        .await
+                        .unwrap();
+                    assert!(response.entries.is_empty());
+                })
+            }
+
+            KaspadPayloadOps::GetUtxoCountByAddress => {
+                let rpc_client = client.clone();
+                tst!(op, {
+                    let address = Address::new(Prefix::Simnet, Version::PubKey, &[42u8; 32]);
+                    let response = rpc_client
+                        .get_utxo_count_by_address_call(None, GetUtxoCountByAddressRequest::new(address))
+                        .await
+                        .unwrap();
+                    assert_eq!(response.count, 0);
+                })
+            }
+
+'''
+              if anchor not in text:
+                  raise SystemExit('RPC sanity match anchor not found')
+              text = text.replace(anchor, addition + anchor, 1)
+          rpc.write_text(text)
+
+      - name: Format workspace
+        run: cargo fmt --all
+
+      - name: Commit repaired sources
+        run: |
+          git config user.name "Poolaris CI Hotfix"
+          git config user.email "actions@users.noreply.github.com"
+          git add testing/integration/src/consensus_integration_tests.rs testing/integration/src/rpc_tests.rs consensus/core/src/pom_v4.rs consensus/src/pipeline/body_processor/body_validation_in_isolation.rs protocol/flows .github/workflows/ci.yaml wallet/core/src/tests/rpc_core_mock.rs
+          if git diff --cached --quiet; then
+            echo "No source changes required"
+            exit 0
+          fi
+          git commit -m "fix(ci): repair v1.5.1 integration coverage"
+          git push origin HEAD:fix/ibd-resilience-v151
