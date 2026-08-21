@@ -283,6 +283,22 @@ impl RpcApi for RpcCoreMock {
         Err(RpcError::NotImplemented)
     }
 
+    async fn get_utxo_entries_by_outpoints_call(
+        &self,
+        _connection: Option<&DynRpcConnection>,
+        _request: GetUtxoEntriesByOutpointsRequest,
+    ) -> RpcResult<GetUtxoEntriesByOutpointsResponse> {
+        Err(RpcError::NotImplemented)
+    }
+
+    async fn get_utxo_count_by_address_call(
+        &self,
+        _connection: Option<&DynRpcConnection>,
+        _request: GetUtxoCountByAddressRequest,
+    ) -> RpcResult<GetUtxoCountByAddressResponse> {
+        Err(RpcError::NotImplemented)
+    }
+
     async fn get_balance_by_address_call(
         &self,
         _connection: Option<&DynRpcConnection>,
