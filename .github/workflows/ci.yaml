@@ -105,11 +105,11 @@ jobs:
       - name: Run cargo doc tests
         run: cargo test --doc --workspace
 
-      - name: Run cargo test on kaspa-hashes without asm
-        run: cargo nextest run -p kaspa-hashes --features=no-asm --benches
+      - name: Run cargo test on keryx-hashes without asm
+        run: cargo nextest run -p keryx-hashes --features=no-asm --benches
 
-      - name: Run cargo doc tests with features=no-asm on kaspa-hashes
-        run: cargo test --doc -p kaspa-hashes --features=no-asm
+      - name: Run cargo doc tests with features=no-asm on keryx-hashes
+        run: cargo test --doc -p keryx-hashes --features=no-asm
 
       - name: Run cargo doc
         run: cargo doc --no-deps --workspace
@@ -210,7 +210,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
 
       - name: Run no_std cargo check for crypto/addresses
-        run: cargo check -p kaspa-addresses --no-default-features --target thumbv7em-none-eabi
+        run: cargo check -p keryx-addresses --no-default-features --target thumbv7em-none-eabi
 
 
   check-wasm32:
@@ -259,14 +259,14 @@ jobs:
 
       # append here any new wasm32 crate not already covered by the existing checks
 
-      - name: Run cargo check of kaspa-wrpc-wasm for wasm32 target
-        run: cargo clippy -p kaspa-wrpc-wasm --target wasm32-unknown-unknown
+      - name: Run cargo check of keryx-wrpc-wasm for wasm32 target
+        run: cargo clippy -p keryx-wrpc-wasm --target wasm32-unknown-unknown
 
-      - name: Run cargo check of kaspa-wallet-cli-wasm for wasm32 target
-        run: cargo clippy -p kaspa-wallet-cli-wasm --target wasm32-unknown-unknown
+      - name: Run cargo check of keryx-wallet-cli-wasm for wasm32 target
+        run: cargo clippy -p keryx-wallet-cli-wasm --target wasm32-unknown-unknown
 
-      - name: Run cargo check of kaspa-wasm for wasm32 target
-        run: cargo clippy -p kaspa-wasm --target wasm32-unknown-unknown
+      - name: Run cargo check of keryx-wasm for wasm32 target
+        run: cargo clippy -p keryx-wasm --target wasm32-unknown-unknown
   
   test-wasm32:
     name: Test WASM32
@@ -407,7 +407,7 @@ jobs:
       - name: Upload WASM build to GitHub 
         uses: actions/upload-artifact@v4
         with: 
-          name: kaspa-wasm32-sdk-${{ env.SHORT_SHA }}
+          name: keryx-wasm32-sdk-${{ env.SHORT_SHA }}
           path: wasm/release/
   build-release:
     name: Build Linux Release
@@ -433,9 +433,9 @@ jobs:
           # Run build script for musl toolchain
           source musl-toolchain/build.sh
           # Build bridge with allow-multiple-definition flag to handle mimalloc conflicts with libstdc++ in musl builds
-          # This flag is only needed for kaspa-stratum-bridge due to its dual mimalloc dependency structure
+          # This flag is only needed for keryx-stratum-bridge due to its dual mimalloc dependency structure
           export RUSTFLAGS="$RUSTFLAGS -C link-arg=-Wl,--allow-multiple-definition"
           
           # Build other binaries first (without the allow-multiple-definition flag)
-          cargo build --bin kaspad --bin rothschild --bin kaspa-wallet --bin stratum-bridge --release --target x86_64-unknown-linux-musl
+          cargo build --bin keryxd --bin rothschild --bin keryx-wallet --bin stratum-bridge --release --target x86_64-unknown-linux-musl
           
