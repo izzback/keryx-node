@@ -36,18 +36,18 @@ impl DbPomProofStore {
         Self::new(Arc::clone(&self.db), cache_policy)
     }
 
-    // Append-only, but retry-safe for the same immutable proof. `CachedDbAccess::write` publishes
-    // the value to the cache before the surrounding RocksDB WriteBatch is flushed, so body commit
-    // can race with PoM re-proof adoption and observe the hash as present while the first writer is
-    // still finishing. Treat that exact duplicate as an idempotent success. A different proof for
-    // the same hash remains a hard data-consistency error rather than being silently overwritten.
+    // Append-only logical value, but retry-safe for the same immutable proof. `CachedDbAccess::write`
+    // publishes the value to the cache before the surrounding RocksDB WriteBatch is flushed, so body
+    // commit can race with PoM re-proof adoption and observe the hash as present while the first writer
+    // is still finishing. If the already-published proof is byte-identical, put the same value into the
+    // racing batch as well: this keeps that batch self-contained/durable and avoids HashAlreadyExists.
+    // A different proof for the same hash remains a hard data-consistency error.
     pub fn insert_batch(&self, batch: &mut WriteBatch, hash: Hash, proof: &PomProof) -> Result<(), StoreError> {
         if self.access.has(hash)? {
             let existing = self.get(hash)?;
-            if existing.wire_digest() == proof.wire_digest() {
-                return Ok(());
+            if existing.wire_digest() != proof.wire_digest() {
+                return Err(StoreError::DataInconsistency(format!("conflicting PoM possession proofs for block {hash}")));
             }
-            return Err(StoreError::DataInconsistency(format!("conflicting PoM possession proofs for block {hash}")));
         }
         self.access.write(BatchDbWriter::new(batch), hash, proof.clone())?;
         Ok(())
@@ -100,7 +100,7 @@ mod tests {
     }
 
     #[test]
-    fn concurrent_same_proof_insert_is_idempotent_before_batch_flush() {
+    fn concurrent_same_proof_insert_is_retry_safe_before_first_batch_flush() {
         let (_lifetime, db) = create_temp_db!(ConnBuilder::default().with_files_limit(10));
         let store = DbPomProofStore::new(db.clone(), CachePolicy::Count(16));
         let hash: Hash = 42.into();
@@ -112,11 +112,12 @@ mod tests {
         store.insert_batch(&mut first_batch, hash, &proof).unwrap();
 
         // Before the fix this returned HashAlreadyExists, and commit_body().unwrap() panicked.
+        // The racing writer must be able to carry the same immutable proof in its own batch.
         let mut racing_batch = WriteBatch::default();
         store.insert_batch(&mut racing_batch, hash, &proof).unwrap();
 
-        // The first writer still owns persistence; the duplicate must not replace it.
-        db.write(first_batch).unwrap();
+        // Flush only the racing batch. This proves it does not depend on the first writer finishing.
+        db.write(racing_batch).unwrap();
         assert_eq!(store.get(hash).unwrap().wire_digest(), proof.wire_digest());
     }
 
