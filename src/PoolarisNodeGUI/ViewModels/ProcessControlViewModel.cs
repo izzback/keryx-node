@@ -44,6 +44,7 @@ public sealed class ProcessControlViewModel : ViewModelBase
     public string AttachedExecutable => AttachedNode?.ExecutablePath ?? "—";
     public string AttachedStarted => AttachedNode?.StartedDisplay ?? "—";
     public string AttachedPid => _session.AttachedPid;
+    public string RpcEndpoint => _session.RpcEndpointDisplay;
 
     public string Status { get => _status; private set => SetProperty(ref _status, value); }
     public string LastError { get => _lastError; private set => SetProperty(ref _lastError, value); }
@@ -52,9 +53,9 @@ public sealed class ProcessControlViewModel : ViewModelBase
     public ICommand AttachCommand { get; }
     public ICommand DetachCommand { get; }
 
-    public void AttachManaged(KeryxProcessInfo process)
+    public void AttachManaged(KeryxProcessInfo process, int rpcPort)
     {
-        _session.AttachManaged(process);
+        _session.AttachManaged(process, rpcPort);
         Status = $"Attached to managed node PID {process.ProcessId}.";
         LastError = string.Empty;
     }
@@ -128,7 +129,10 @@ public sealed class ProcessControlViewModel : ViewModelBase
             or nameof(RuntimeNodeSession.AttachedNodeLabel)
             or nameof(RuntimeNodeSession.AttachedPid)
             or nameof(RuntimeNodeSession.CanAttach)
-            or nameof(RuntimeNodeSession.CanDetach))
+            or nameof(RuntimeNodeSession.CanDetach)
+            or nameof(RuntimeNodeSession.RpcHost)
+            or nameof(RuntimeNodeSession.RpcPort)
+            or nameof(RuntimeNodeSession.RpcEndpointVerified))
         {
             RaiseAllSessionProperties();
         }
@@ -143,6 +147,7 @@ public sealed class ProcessControlViewModel : ViewModelBase
         OnPropertyChanged(nameof(AttachedExecutable));
         OnPropertyChanged(nameof(AttachedStarted));
         OnPropertyChanged(nameof(AttachedPid));
+        OnPropertyChanged(nameof(RpcEndpoint));
         RaiseCommandStates();
     }
 
