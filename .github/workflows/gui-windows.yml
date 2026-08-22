@@ -1,0 +1,29 @@
+name: Poolaris Node GUI Windows
+
+on:
+  push:
+    branches: [poolaris-node-gui]
+  pull_request:
+    branches: [poolaris-node-gui]
+
+jobs:
+  build-test:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '8.0.x'
+      - name: Restore
+        run: dotnet restore PoolarisNodeGUI.sln
+      - name: Build
+        run: dotnet build PoolarisNodeGUI.sln -c Release --no-restore
+      - name: Test
+        run: dotnet test PoolarisNodeGUI.sln -c Release --no-build --verbosity normal
+      - name: Publish win-x64
+        run: dotnet publish src/PoolarisNodeGUI/PoolarisNodeGUI.csproj -c Release -r win-x64 --self-contained true -o artifacts/win-x64
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: poolaris-node-gui-win-x64
+          path: artifacts/win-x64

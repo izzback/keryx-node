@@ -1,19 +1,15 @@
-target
-web-root
-**/.idea/
-/rust-toolchain
-/.vscode/
-.zed
-**/db-*
-/testing/integration/testdata/dags_for_json_tests/goref-mainnet
-/testing/integration/testdata/dags_for_json_tests/goref-1.6M-tx-10K-blocks
-analyzer-target
+# .NET / Visual Studio
+.vs/
+**/bin/
+**/obj/
+TestResults/
+*.user
+*.suo
+
+# Local Poolaris runtime data
+/data/
+/build/
+
+# OS
+Thumbs.db
 .DS_Store
-*.code-workspace
-/setup
-testing/integration/perflogs*
-Servers.toml
-release
-package-sizes.js
-rustbridge_*.log
-Cargo.lock
