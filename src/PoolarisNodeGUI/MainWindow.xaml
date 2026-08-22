@@ -4,8 +4,8 @@
         xmlns:vm="clr-namespace:PoolarisNodeGUI.ViewModels"
         xmlns:views="clr-namespace:PoolarisNodeGUI.Views"
         Title="Poolaris Node GUI"
-        Width="1480" Height="900"
-        MinWidth="1050" MinHeight="680"
+        Width="1580" Height="930"
+        MinWidth="1180" MinHeight="720"
         WindowStartupLocation="CenterScreen">
     <Window.DataContext>
         <vm:MainViewModel />
@@ -22,17 +22,17 @@
 
     <Grid Background="{StaticResource BackgroundBrush}">
         <Grid.RowDefinitions>
-            <RowDefinition Height="68" />
+            <RowDefinition Height="72" />
             <RowDefinition Height="*" />
-            <RowDefinition Height="34" />
+            <RowDefinition Height="38" />
         </Grid.RowDefinitions>
         <Grid.ColumnDefinitions>
-            <ColumnDefinition Width="205" />
+            <ColumnDefinition Width="248" />
             <ColumnDefinition Width="*" />
         </Grid.ColumnDefinitions>
 
-        <Border Grid.Row="0" Grid.ColumnSpan="2" Background="#03111E" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
-            <Grid Margin="22,0">
+        <Border Grid.Row="0" Grid.ColumnSpan="2" Background="{StaticResource HeaderBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
+            <Grid Margin="20,0">
                 <Grid.ColumnDefinitions>
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="1" />
@@ -40,24 +40,46 @@
                     <ColumnDefinition Width="Auto" />
                     <ColumnDefinition Width="*" />
                 </Grid.ColumnDefinitions>
-                <TextBlock Text="POOLARIS" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="White" />
-                <Border Grid.Column="1" Width="1" Height="30" Background="{StaticResource BorderBrush}" Margin="18,0" />
-                <TextBlock Grid.Column="2" Text="Poolaris Node GUI" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" />
-                <Border Grid.Column="3" Margin="18,0,0,0" Padding="10,5" CornerRadius="5" BorderBrush="#175D3A" BorderThickness="1" Background="#08251A" VerticalAlignment="Center">
-                    <TextBlock Text="{Binding NodeStatus}" Foreground="{StaticResource SuccessBrush}" FontSize="11" FontWeight="SemiBold" />
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <TextBlock Text="◈" Foreground="{StaticResource AccentBrush}" FontSize="28" FontWeight="Bold" Margin="0,0,9,0" />
+                    <TextBlock Text="POOLARIS" FontSize="22" FontWeight="SemiBold" VerticalAlignment="Center" Foreground="White" />
+                </StackPanel>
+                <Border Grid.Column="1" Width="1" Height="34" Background="{StaticResource BorderBrush}" Margin="20,0" />
+                <TextBlock Grid.Column="2" Text="Poolaris Node GUI" FontSize="20" FontWeight="SemiBold" VerticalAlignment="Center" />
+                <Border Grid.Column="3" Margin="20,0,0,0" Padding="11,5" CornerRadius="5" BorderBrush="#17683E" BorderThickness="1" Background="#08251A" VerticalAlignment="Center">
+                    <StackPanel Orientation="Horizontal">
+                        <Ellipse Width="7" Height="7" Fill="{StaticResource SuccessBrush}" Margin="0,0,7,0" />
+                        <TextBlock Text="{Binding NodeStatus}" Foreground="{StaticResource SuccessBrush}" FontSize="11" FontWeight="SemiBold" />
+                    </StackPanel>
                 </Border>
             </Grid>
         </Border>
 
-        <Border Grid.Row="1" Grid.Column="0" Background="#03111E" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0">
-            <StackPanel Margin="4,16">
-                <Button Style="{StaticResource NavButtonStyle}" Content="⌂   Dashboard" Command="{Binding NavigateCommand}" CommandParameter="Dashboard" />
-                <Button Style="{StaticResource NavButtonStyle}" Content="◇   Node Launcher" Command="{Binding NavigateCommand}" CommandParameter="NodeLauncher" />
-                <Button Style="{StaticResource NavButtonStyle}" Content="◎   Peers" Command="{Binding NavigateCommand}" CommandParameter="Peers" />
-                <Button Style="{StaticResource NavButtonStyle}" Content="⌁   Performance" Command="{Binding NavigateCommand}" CommandParameter="Performance" />
-                <Button Style="{StaticResource NavButtonStyle}" Content="▤   Logs" Command="{Binding NavigateCommand}" CommandParameter="Logs" />
-                <Button Style="{StaticResource NavButtonStyle}" Content="⚙   Settings" Command="{Binding NavigateCommand}" CommandParameter="Settings" />
-            </StackPanel>
+        <Border Grid.Row="1" Grid.Column="0" Background="{StaticResource SidebarBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,1,0">
+            <Grid>
+                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                <StackPanel Margin="3,14,3,0">
+                    <Button Style="{StaticResource NavButtonStyle}" Content="⌂    Dashboard" Command="{Binding NavigateCommand}" CommandParameter="Dashboard" />
+                    <Button Style="{StaticResource NavButtonStyle}" Content="◇    Node Launcher" Command="{Binding NavigateCommand}" CommandParameter="NodeLauncher" />
+                    <Button Style="{StaticResource NavButtonStyle}" Content="◎    Peers" Command="{Binding NavigateCommand}" CommandParameter="Peers" />
+                    <Button Style="{StaticResource NavButtonStyle}" Content="⌁    Performance" Command="{Binding NavigateCommand}" CommandParameter="Performance" />
+                    <Button Style="{StaticResource NavButtonStyle}" Content="▤    Logs" Command="{Binding NavigateCommand}" CommandParameter="Logs" />
+                    <Button Style="{StaticResource NavButtonStyle}" Content="⚙    Settings" Command="{Binding NavigateCommand}" CommandParameter="Settings" />
+                </StackPanel>
+
+                <Border Grid.Row="2" Style="{StaticResource CardStyle}" Margin="14" Padding="12">
+                    <StackPanel>
+                        <TextBlock Text="Keryx Node" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" />
+                        <TextBlock Text="Independent manager" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,6,0,0" />
+                        <TextBlock Text="No node attached" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,3,0,12" />
+                        <Border Height="74" CornerRadius="5" Background="#04111D" BorderBrush="#0A3550" BorderThickness="1">
+                            <Grid>
+                                <TextBlock Text="◈" FontSize="42" Foreground="{StaticResource AccentStrongBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.75" />
+                            </Grid>
+                        </Border>
+                    </StackPanel>
+                </Border>
+            </Grid>
         </Border>
 
         <Grid Grid.Row="1" Grid.Column="1">
@@ -65,15 +87,19 @@
                 <RowDefinition Height="48" />
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
-            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1">
-                <TextBlock Text="{Binding CurrentPageTitle}" FontSize="18" FontWeight="SemiBold" VerticalAlignment="Center" Margin="20,0" />
+            <Border BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,0,0,1" Background="#020D17">
+                <TextBlock Text="{Binding CurrentPageTitle}" FontSize="17" FontWeight="SemiBold" VerticalAlignment="Center" Margin="18,0" />
             </Border>
             <ContentControl Grid.Row="1" Content="{Binding CurrentPage}" Margin="14" />
         </Grid>
 
-        <Border Grid.Row="2" Grid.ColumnSpan="2" Background="#03111E" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
+        <Border Grid.Row="2" Grid.ColumnSpan="2" Background="{StaticResource HeaderBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="0,1,0,0">
             <Grid Margin="18,0">
-                <TextBlock Text="●  Node: STOPPED     |     Ready" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" FontSize="11" />
+                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
+                    <Ellipse Width="7" Height="7" Fill="{StaticResource AccentBrush}" Margin="0,0,7,0" />
+                    <TextBlock Text="{Binding NodeStatus}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                    <TextBlock Text="   |   Ready" Foreground="{StaticResource MutedTextBrush}" FontSize="11" />
+                </StackPanel>
                 <TextBlock Text="Independent graphical node manager for Keryx" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Right" VerticalAlignment="Center" FontSize="11" />
             </Grid>
         </Border>
