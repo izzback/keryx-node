@@ -1,4 +1,0 @@
-syntax = "proto3";
-package protowire;
-
-// Placeholder intentionally replaced in the next Git tree commit with the exact Keryx blob.
