@@ -36,10 +36,18 @@ impl DbPomProofStore {
         Self::new(Arc::clone(&self.db), cache_policy)
     }
 
-    // This is append only
+    // Append-only, but retry-safe for the same immutable proof. `CachedDbAccess::write` publishes
+    // the value to the cache before the surrounding RocksDB WriteBatch is flushed, so body commit
+    // can race with PoM re-proof adoption and observe the hash as present while the first writer is
+    // still finishing. Treat that exact duplicate as an idempotent success. A different proof for
+    // the same hash remains a hard data-consistency error rather than being silently overwritten.
     pub fn insert_batch(&self, batch: &mut WriteBatch, hash: Hash, proof: &PomProof) -> Result<(), StoreError> {
         if self.access.has(hash)? {
-            return Err(StoreError::HashAlreadyExists(hash));
+            let existing = self.get(hash)?;
+            if existing.wire_digest() == proof.wire_digest() {
+                return Ok(());
+            }
+            return Err(StoreError::DataInconsistency(format!("conflicting PoM possession proofs for block {hash}")));
         }
         self.access.write(BatchDbWriter::new(batch), hash, proof.clone())?;
         Ok(())
@@ -68,5 +76,61 @@ impl PomProofStoreReader for DbPomProofStore {
 
     fn has(&self, hash: Hash) -> Result<bool, StoreError> {
         self.access.has(hash)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use keryx_database::{create_temp_db, prelude::ConnBuilder};
+
+    fn dummy_proof(final_state: u64) -> PomProof {
+        PomProof {
+            tier: 0,
+            trace_root: [1; 32],
+            pow_value: [2; 32],
+            final_state,
+            initial_trace_path: vec![],
+            final_trace_path: vec![],
+            openings: vec![],
+            steps_v2: None,
+            v3: None,
+            v4: None,
+        }
+    }
+
+    #[test]
+    fn concurrent_same_proof_insert_is_idempotent_before_batch_flush() {
+        let (_lifetime, db) = create_temp_db!(ConnBuilder::default().with_files_limit(10));
+        let store = DbPomProofStore::new(db.clone(), CachePolicy::Count(16));
+        let hash: Hash = 42.into();
+        let proof = dummy_proof(7);
+
+        // First writer publishes to CachedDbAccess immediately but deliberately does not flush its
+        // RocksDB batch yet. This is the window hit when body commit races re-proof adoption.
+        let mut first_batch = WriteBatch::default();
+        store.insert_batch(&mut first_batch, hash, &proof).unwrap();
+
+        // Before the fix this returned HashAlreadyExists, and commit_body().unwrap() panicked.
+        let mut racing_batch = WriteBatch::default();
+        store.insert_batch(&mut racing_batch, hash, &proof).unwrap();
+
+        // The first writer still owns persistence; the duplicate must not replace it.
+        db.write(first_batch).unwrap();
+        assert_eq!(store.get(hash).unwrap().wire_digest(), proof.wire_digest());
+    }
+
+    #[test]
+    fn conflicting_proof_for_same_hash_is_not_silently_accepted() {
+        let (_lifetime, db) = create_temp_db!(ConnBuilder::default().with_files_limit(10));
+        let store = DbPomProofStore::new(db, CachePolicy::Count(16));
+        let hash: Hash = 43.into();
+
+        let mut first_batch = WriteBatch::default();
+        store.insert_batch(&mut first_batch, hash, &dummy_proof(7)).unwrap();
+
+        let mut conflicting_batch = WriteBatch::default();
+        let err = store.insert_batch(&mut conflicting_batch, hash, &dummy_proof(8)).unwrap_err();
+        assert!(matches!(err, StoreError::DataInconsistency(_)));
     }
 }
