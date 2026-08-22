@@ -33,6 +33,16 @@ public sealed class KeryxProcessService : IDisposable
         if (KeryxPathResolver.LooksLikeDatabaseDirectory(settings.AppDirectory))
             return new(false, NodeProcessState.Failed, Error: "L'AppDir pointe directement vers keryx-mainnet\\datadir. Sélectionnez le répertoire racine Keryx.");
 
+        var conflicts = KeryxPortInspector.FindRpcConflicts(
+            settings.EnableGrpc, settings.GrpcPort,
+            settings.EnableWrpcBorsh, settings.WrpcBorshPort,
+            settings.EnableWrpcJson, settings.WrpcJsonPort);
+        if (conflicts.Count > 0)
+        {
+            var details = string.Join(", ", conflicts.Select(x => $"{x.Name} {x.Port}"));
+            return new(false, NodeProcessState.Failed, Error: $"Impossible de démarrer Keryx : port(s) déjà utilisé(s) : {details}.");
+        }
+
         Directory.CreateDirectory(settings.AppDirectory);
 
         lock (_logLock)
