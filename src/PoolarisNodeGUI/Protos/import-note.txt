@@ -1,1 +1,0 @@
-The next commit replaces rpc.proto/messages.proto with the exact source blobs from Keryx master.
