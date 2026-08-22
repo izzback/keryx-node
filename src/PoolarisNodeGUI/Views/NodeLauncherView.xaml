@@ -1,21 +1,165 @@
 <UserControl x:Class="PoolarisNodeGUI.Views.NodeLauncherView"
              xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-    <ScrollViewer VerticalScrollBarVisibility="Auto">
-        <StackPanel MaxWidth="1100" HorizontalAlignment="Stretch">
-            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
-                <StackPanel>
-                    <TextBlock Text="NODE" FontWeight="Bold"/>
-                    <TextBlock Text="Keryx executable" Foreground="{StaticResource MutedTextBrush}" Margin="0,14,0,5"/>
-                    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><TextBox Height="32"/><Button Grid.Column="1" Margin="8,0,0,0" Content="Browse..."/></Grid>
-                    <TextBlock Text="Keryx Application Directory (AppDir)" Foreground="{StaticResource MutedTextBrush}" Margin="0,12,0,5"/>
-                    <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="100"/></Grid.ColumnDefinitions><TextBox Height="32"/><Button Grid.Column="1" Margin="8,0,0,0" Content="Browse..."/></Grid>
-                    <TextBlock Text="Resolved database: —" Foreground="{StaticResource MutedTextBrush}" Margin="0,7,0,0"/>
+    <Grid>
+        <Grid.RowDefinitions>
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+            <Grid MaxWidth="1320" HorizontalAlignment="Stretch">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.08*" />
+                    <ColumnDefinition Width="14" />
+                    <ColumnDefinition Width="0.92*" />
+                </Grid.ColumnDefinitions>
+
+                <StackPanel Grid.Column="0">
+                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="NODE" Style="{StaticResource SectionTitleStyle}" />
+                            <TextBlock Text="Keryx executable" Style="{StaticResource FieldLabelStyle}" />
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="92"/></Grid.ColumnDefinitions>
+                                <TextBox Text="{Binding NodeExecutable, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource SecondaryButtonStyle}" Content="Browse..." Click="BrowseExecutable_Click" />
+                            </Grid>
+
+                            <TextBlock Text="Keryx Application Directory (AppDir)" Style="{StaticResource FieldLabelStyle}" />
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="92"/></Grid.ColumnDefinitions>
+                                <TextBox Text="{Binding AppDirectory, UpdateSourceTrigger=PropertyChanged}" ToolTip="Répertoire racine Keryx. Ne sélectionnez pas directement keryx-mainnet\datadir." />
+                                <Button Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource SecondaryButtonStyle}" Content="Browse..." Click="BrowseAppDir_Click" />
+                            </Grid>
+                            <TextBlock Text="{Binding ResolvedDatabasePath, StringFormat=Resolved database: {0}}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,7,0,0" TextTrimming="CharacterEllipsis" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="NETWORK &amp; P2P" Style="{StaticResource SectionTitleStyle}" />
+
+                            <Grid Margin="0,14,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="Network" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                <TextBlock Grid.Column="1" Text="Mainnet" VerticalAlignment="Center" Margin="0,0,8,0" />
+                                <ToggleButton Grid.Column="2" Style="{StaticResource SwitchStyle}" IsChecked="{Binding IsTestnet}" />
+                                <TextBlock Grid.Column="3" Text="Testnet" VerticalAlignment="Center" Margin="8,0,0,0" />
+                            </Grid>
+
+                            <Grid Margin="0,12,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="UTXO Index" VerticalAlignment="Center" ToolTip="Active l’index UTXO. Il permet certaines requêtes RPC supplémentaires mais augmente l’utilisation du disque et de la mémoire." />
+                                <ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding UtxoIndex}" />
+                            </Grid>
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="Accept inbound connections" VerticalAlignment="Center" />
+                                <ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding AcceptInboundConnections}" />
+                            </Grid>
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="DNS peer discovery" VerticalAlignment="Center" ToolTip="Découverte initiale des peers via les DNS seeds Keryx." />
+                                <ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding DnsPeerDiscovery}" />
+                            </Grid>
+                            <Grid Margin="0,10,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="UPnP" VerticalAlignment="Center" ToolTip="Autorise Keryx à demander automatiquement au routeur d’ouvrir son port P2P." />
+                                <ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding Upnp}" />
+                            </Grid>
+
+                            <Grid Margin="0,14,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="Outbound peers" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" Text="{Binding OutboundPeers, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                            <Grid Margin="0,8,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="150"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="Max inbound peers" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                                <TextBox Grid.Column="1" Text="{Binding MaxInboundPeers, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="RPC — LOOPBACK BY DEFAULT" Style="{StaticResource SectionTitleStyle}" />
+                            <TextBlock Text="Poolaris lie les interfaces RPC sur 127.0.0.1 par défaut." Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,6,0,12" />
+
+                            <Grid>
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="88"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="Enable gRPC" VerticalAlignment="Center" ToolTip="Interface RPC principale utilisée pour l’état du node, le DAG et les peers." />
+                                <ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding EnableGrpc}" Margin="0,0,12,0" />
+                                <TextBox Grid.Column="2" Text="{Binding GrpcPort, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                            <Grid Margin="0,9,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="88"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="Enable wRPC JSON" VerticalAlignment="Center" ToolTip="Interface WebSocket RPC au format JSON." />
+                                <ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding EnableWrpcJson}" Margin="0,0,12,0" />
+                                <TextBox Grid.Column="2" Text="{Binding WrpcJsonPort, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                            <Grid Margin="0,9,0,0">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="88"/></Grid.ColumnDefinitions>
+                                <TextBlock Text="Enable wRPC Borsh" VerticalAlignment="Center" ToolTip="Interface WebSocket RPC utilisant l’encodage Borsh." />
+                                <ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding EnableWrpcBorsh}" Margin="0,0,12,0" />
+                                <TextBox Grid.Column="2" Text="{Binding WrpcBorshPort, UpdateSourceTrigger=PropertyChanged}" />
+                            </Grid>
+                        </StackPanel>
+                    </Border>
                 </StackPanel>
-            </Border>
-            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12"><StackPanel><TextBlock Text="NETWORK &amp; P2P" FontWeight="Bold"/><CheckBox Content="Mainnet" IsChecked="True" Margin="0,14,0,0"/><CheckBox Content="Accept inbound connections" Margin="0,8,0,0"/><CheckBox Content="DNS peer discovery" IsChecked="True" Margin="0,8,0,0"/><CheckBox Content="UPnP" IsChecked="True" Margin="0,8,0,0"/></StackPanel></Border>
-            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12"><StackPanel><TextBlock Text="RPC — LOOPBACK BY DEFAULT" FontWeight="Bold"/><TextBlock Text="RPC listeners will default to 127.0.0.1." Foreground="{StaticResource MutedTextBrush}" Margin="0,8,0,10"/><CheckBox Content="Enable gRPC — 127.0.0.1:22110" IsChecked="True"/><CheckBox Content="Enable wRPC Borsh — 127.0.0.1:23110" Margin="0,8,0,0"/><CheckBox Content="Enable wRPC JSON — 127.0.0.1:24110" IsChecked="True" Margin="0,8,0,0"/></StackPanel></Border>
-            <StackPanel Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,6,0,18"><Button Style="{StaticResource PrimaryButtonStyle}" Content="Start Node"/><Button Content="Stop Node" Padding="18,9" Margin="8,0,0,0"/><Button Content="Restart" Padding="18,9" Margin="8,0,0,0"/></StackPanel>
-        </StackPanel>
-    </ScrollViewer>
+
+                <StackPanel Grid.Column="2">
+                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="PERFORMANCE" Style="{StaticResource SectionTitleStyle}" />
+                            <TextBlock Text="Async threads" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding AsyncThreads, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Text="RAM scale" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding RamScale, UpdateSourceTrigger=PropertyChanged}" />
+                            <TextBlock Text="RocksDB preset" Style="{StaticResource FieldLabelStyle}" />
+                            <ComboBox ItemsSource="{Binding RocksDbPresets}" SelectedItem="{Binding RocksDbPreset}" />
+                            <TextBlock Text="RocksDB cache size (MB)" Style="{StaticResource FieldLabelStyle}" />
+                            <TextBox Text="{Binding RocksDbCacheSizeMb, UpdateSourceTrigger=PropertyChanged}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="FEATURES" Style="{StaticResource SectionTitleStyle}" />
+                            <Grid Margin="0,14,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Archival Node" ToolTip="Conserve davantage de données historiques. Ce mode nécessite beaucoup plus d’espace disque."/><ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding Archival}"/></Grid>
+                            <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Unsafe RPC  ⚠" Foreground="{StaticResource WarningBrush}" ToolTip="Active les commandes RPC pouvant modifier l’état du node. À utiliser uniquement sur une interface de confiance, de préférence 127.0.0.1."/><ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding UnsafeRpc}"/></Grid>
+                            <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Enable Unsynced Mining  ⚠" Foreground="{StaticResource WarningBrush}" ToolTip="Autorise certaines opérations de minage avant la synchronisation complète. Principalement prévu pour les tests."/><ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding EnableUnsyncedMining}"/></Grid>
+                            <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Disable Log Files" ToolTip="Empêche Keryx d’écrire ses fichiers de logs habituels sur disque."/><ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding DisableLogFiles}"/></Grid>
+                            <Grid Margin="0,10,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="RocksDB no blob files" ToolTip="Option RocksDB avancée. Peut modifier les performances et l’utilisation du stockage."/><ToggleButton Grid.Column="1" Style="{StaticResource SwitchStyle}" IsChecked="{Binding RocksDbNoBlobFiles}"/></Grid>
+
+                            <TextBlock Text="Log level" Style="{StaticResource FieldLabelStyle}" />
+                            <ComboBox ItemsSource="{Binding LogLevels}" SelectedItem="{Binding LogLevel}" />
+                        </StackPanel>
+                    </Border>
+
+                    <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                        <StackPanel>
+                            <TextBlock Text="GENERATED COMMAND" Style="{StaticResource SectionTitleStyle}" />
+                            <TextBox Text="{Binding GeneratedCommand}" IsReadOnly="True" TextWrapping="Wrap" AcceptsReturn="True" MinHeight="76" Margin="0,12,0,0" Foreground="{StaticResource MutedTextBrush}" />
+                        </StackPanel>
+                    </Border>
+                </StackPanel>
+            </Grid>
+        </ScrollViewer>
+
+        <Border Grid.Row="1" Background="{StaticResource HeaderBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,10,0,0">
+            <Grid>
+                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Button Style="{StaticResource PrimaryButtonStyle}" Content="▶  Start Node" Command="{Binding StartCommand}" MinWidth="150" />
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButtonStyle}" Content="■  Stop Node" Command="{Binding StopCommand}" MinWidth="130" Margin="10,0,0,0" />
+                <Button Grid.Column="2" Style="{StaticResource SecondaryButtonStyle}" Content="↻  Restart" Command="{Binding RestartCommand}" MinWidth="120" Margin="10,0,0,0" />
+                <StackPanel Grid.Column="4" HorizontalAlignment="Right">
+                    <TextBlock Text="{Binding ProcessStateLabel}" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="{StaticResource SuccessBrush}" />
+                    <TextBlock Text="{Binding StatusMessage}" HorizontalAlignment="Right" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,3,0,0" />
+                    <TextBlock Text="{Binding LastError}" HorizontalAlignment="Right" Foreground="{StaticResource DangerBrush}" FontSize="11" MaxWidth="420" TextTrimming="CharacterEllipsis" />
+                </StackPanel>
+            </Grid>
+        </Border>
+    </Grid>
 </UserControl>
