@@ -40,4 +40,19 @@ public partial class NodeLauncherView : UserControl
         var selected = dialog.FolderName;
         vm.AppDirectory = KeryxPathResolver.SuggestAppDirectory(selected) ?? selected;
     }
+
+    private async void KillNode_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not NodeLauncherViewModel vm || vm.ProcessId is not int pid)
+            return;
+
+        var executable = string.IsNullOrWhiteSpace(vm.NodeExecutable) ? "keryxd.exe" : vm.NodeExecutable;
+        var dialog = new ForceKillConfirmationWindow(pid, executable)
+        {
+            Owner = Window.GetWindow(this)
+        };
+
+        if (dialog.ShowDialog() == true)
+            await vm.ForceKillAsync();
+    }
 }
