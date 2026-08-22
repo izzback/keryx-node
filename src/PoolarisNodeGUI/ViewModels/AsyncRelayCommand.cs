@@ -25,6 +25,10 @@ public sealed class AsyncRelayCommand : ICommand
         {
             await _execute().ConfigureAwait(true);
         }
+        catch (Exception ex)
+        {
+            ExecutionFailed?.Invoke(this, ex);
+        }
         finally
         {
             _isExecuting = false;
@@ -33,5 +37,7 @@ public sealed class AsyncRelayCommand : ICommand
     }
 
     public event EventHandler? CanExecuteChanged;
+    public event EventHandler<Exception>? ExecutionFailed;
+
     public void RaiseCanExecuteChanged() => CanExecuteChanged?.Invoke(this, EventArgs.Empty);
 }
