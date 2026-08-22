@@ -43,16 +43,15 @@ public partial class NodeLauncherView : UserControl
 
     private async void KillNode_Click(object sender, RoutedEventArgs e)
     {
-        if (DataContext is not NodeLauncherViewModel vm || vm.ProcessId is not int pid)
+        if (DataContext is not NodeLauncherViewModel vm || vm.ProcessControl.AttachedNode is not { } attached)
             return;
 
-        var executable = string.IsNullOrWhiteSpace(vm.NodeExecutable) ? "keryxd.exe" : vm.NodeExecutable;
-        var dialog = new ForceKillConfirmationWindow(pid, executable)
+        var dialog = new ForceKillConfirmationWindow(attached.ProcessId, attached.ExecutablePath)
         {
             Owner = Window.GetWindow(this)
         };
 
         if (dialog.ShowDialog() == true)
-            await vm.ForceKillAsync();
+            await vm.KillAttachedNodeAsync();
     }
 }
