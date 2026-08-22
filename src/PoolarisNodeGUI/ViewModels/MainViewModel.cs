@@ -1,16 +1,25 @@
+using System.ComponentModel;
 using System.Windows.Input;
 
 namespace PoolarisNodeGUI.ViewModels;
 
 public sealed class MainViewModel : ViewModelBase
 {
+    private readonly DashboardViewModel _dashboard = new();
+    private readonly NodeLauncherViewModel _launcher = new();
+    private readonly PeersViewModel _peers = new();
+    private readonly PerformanceViewModel _performance = new();
+    private readonly LogsViewModel _logs = new();
+    private readonly SettingsViewModel _settings = new();
+
     private ViewModelBase _currentPage;
     private string _currentPageTitle = "Dashboard";
     private string _nodeStatus = "NODE STOPPED";
 
     public MainViewModel()
     {
-        _currentPage = new DashboardViewModel();
+        _currentPage = _dashboard;
+        _launcher.PropertyChanged += LauncherOnPropertyChanged;
         NavigateCommand = new RelayCommand(Navigate);
     }
 
@@ -29,7 +38,7 @@ public sealed class MainViewModel : ViewModelBase
     public string NodeStatus
     {
         get => _nodeStatus;
-        set => SetProperty(ref _nodeStatus, value);
+        private set => SetProperty(ref _nodeStatus, value);
     }
 
     public ICommand NavigateCommand { get; }
@@ -39,12 +48,18 @@ public sealed class MainViewModel : ViewModelBase
         var key = parameter as string ?? "Dashboard";
         (CurrentPage, CurrentPageTitle) = key switch
         {
-            "NodeLauncher" => (new NodeLauncherViewModel(), "Node Launcher"),
-            "Peers" => (new PeersViewModel(), "Peers"),
-            "Performance" => (new PerformanceViewModel(), "Performance"),
-            "Logs" => (new LogsViewModel(), "Logs"),
-            "Settings" => (new SettingsViewModel(), "Settings"),
-            _ => (new DashboardViewModel(), "Dashboard")
+            "NodeLauncher" => (_launcher, "Node Launcher"),
+            "Peers" => (_peers, "Peers"),
+            "Performance" => (_performance, "Performance"),
+            "Logs" => (_logs, "Logs"),
+            "Settings" => (_settings, "Settings"),
+            _ => (_dashboard, "Dashboard")
         };
+    }
+
+    private void LauncherOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName == nameof(NodeLauncherViewModel.ProcessStateLabel))
+            NodeStatus = _launcher.ProcessStateLabel;
     }
 }
