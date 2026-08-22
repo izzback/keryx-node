@@ -42,9 +42,17 @@ public sealed class NodeLauncherViewModel : ViewModelBase
     public NodeLauncherViewModel()
     {
         _processService = new KeryxProcessService(_argumentBuilder);
-        StartCommand = new AsyncRelayCommand(StartAsync, () => ProcessState is NodeProcessState.Stopped or NodeProcessState.Failed);
-        StopCommand = new AsyncRelayCommand(StopAsync, () => ProcessState == NodeProcessState.Running);
-        RestartCommand = new AsyncRelayCommand(RestartAsync, () => ProcessState == NodeProcessState.Running);
+
+        var start = new AsyncRelayCommand(StartAsync, () => ProcessState is NodeProcessState.Stopped or NodeProcessState.Failed);
+        var stop = new AsyncRelayCommand(StopAsync, () => ProcessState == NodeProcessState.Running);
+        var restart = new AsyncRelayCommand(RestartAsync, () => ProcessState == NodeProcessState.Running);
+        start.ExecutionFailed += OnCommandFailed;
+        stop.ExecutionFailed += OnCommandFailed;
+        restart.ExecutionFailed += OnCommandFailed;
+
+        StartCommand = start;
+        StopCommand = stop;
+        RestartCommand = restart;
     }
 
     public string NodeExecutable { get => _nodeExecutable; set { if (SetProperty(ref _nodeExecutable, value)) RefreshComputed(); } }
@@ -145,6 +153,13 @@ public sealed class NodeLauncherViewModel : ViewModelBase
         ProcessId = null;
         ProcessState = NodeProcessState.Stopped;
         await StartAsync();
+    }
+
+    private void OnCommandFailed(object? sender, Exception ex)
+    {
+        LastError = ex.Message;
+        StatusMessage = "Unexpected launcher error.";
+        ProcessState = NodeProcessState.Failed;
     }
 
     private NodeSettings CreateSettings() => new()
