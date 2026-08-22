@@ -8,4 +8,15 @@
     <AssemblyName>PoolarisNodeGUI</AssemblyName>
     <RootNamespace>PoolarisNodeGUI</RootNamespace>
   </PropertyGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Google.Protobuf" Version="3.27.2" />
+    <PackageReference Include="Grpc.Net.Client" Version="2.65.0" />
+    <PackageReference Include="Grpc.Tools" Version="2.65.0" PrivateAssets="All" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Protobuf Include="Protos\rpc.proto" GrpcServices="None" />
+    <Protobuf Include="Protos\messages.proto" GrpcServices="Client" />
+  </ItemGroup>
 </Project>
