@@ -18,8 +18,8 @@
                 <StackPanel>
                     <TextBlock Text="◇  NODE CONTROL" Style="{StaticResource SectionTitleStyle}" />
                     <TextBlock Text="Keryx process" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,18,0,5" />
-                    <TextBlock Text="No node attached" FontSize="18" FontWeight="SemiBold" />
-                    <TextBlock Text="Use Node Launcher to select keryxd.exe and the Keryx AppDir." TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,7,0,0" />
+                    <TextBlock Text="{Binding NodeLabel}" FontSize="18" FontWeight="SemiBold" />
+                    <TextBlock Text="{Binding NodeExecutable}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,7,0,0" TextTrimming="CharacterEllipsis" />
 
                     <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,18,0,14" />
 
@@ -31,12 +31,17 @@
                     <Grid Margin="0,9,0,0">
                         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <TextBlock Text="PID" Foreground="{StaticResource MutedTextBrush}" />
-                        <TextBlock Grid.Column="1" Text="—" />
+                        <TextBlock Grid.Column="1" Text="{Binding NodePid}" />
                     </Grid>
                     <Grid Margin="0,9,0,0">
                         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <TextBlock Text="Uptime" Foreground="{StaticResource MutedTextBrush}" />
-                        <TextBlock Grid.Column="1" Text="—" />
+                        <TextBlock Grid.Column="1" Text="{Binding NodeUptime}" />
+                    </Grid>
+                    <Grid Margin="0,9,0,0">
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="Started" Foreground="{StaticResource MutedTextBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding NodeStarted}" />
                     </Grid>
                     <Grid Margin="0,9,0,0">
                         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -46,8 +51,8 @@
                 </StackPanel>
 
                 <StackPanel Grid.Row="2">
-                    <Button Style="{StaticResource PrimaryButtonStyle}" Content="Open Node Launcher" IsEnabled="False" ToolTip="Navigation rapide ajoutée avec le runtime partagé dans la prochaine phase." />
-                    <TextBlock Text="Poolaris ne modifiera jamais directement la base RocksDB." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="10" Margin="0,10,0,0" />
+                    <TextBlock Text="Attach ou lance un node depuis Node Launcher. Fermer Poolaris ne doit jamais arrêter keryxd automatiquement." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="10" />
+                    <TextBlock Text="Poolaris ne modifie jamais directement RocksDB." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="10" Margin="0,7,0,0" />
                 </StackPanel>
             </Grid>
         </Border>
@@ -97,15 +102,17 @@
         <Border Grid.Column="2" Grid.Row="0" Style="{StaticResource CardStyle}" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock Text="⌁  PERFORMANCE" Style="{StaticResource SectionTitleStyle}" />
-                <Grid Margin="0,18,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="CPU Usage"/><TextBlock Grid.Column="1" Text="—" Foreground="{StaticResource AccentBrush}"/></Grid>
+                <Grid Margin="0,18,0,0"><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="CPU Usage" ToolTip="Pourcentage de la capacité CPU totale de la machine utilisée par le processus keryxd attaché."/><TextBlock Grid.Column="1" Text="{Binding CpuUsage}" Foreground="{StaticResource AccentBrush}"/></Grid>
                 <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,12"/>
-                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Private Memory"/><TextBlock Grid.Column="1" Text="—" Foreground="{StaticResource AccentBrush}"/></Grid>
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Private Memory" ToolTip="Mémoire privée réservée au processus keryxd attaché."/><TextBlock Grid.Column="1" Text="{Binding PrivateMemory}" Foreground="{StaticResource AccentBrush}"/></Grid>
                 <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,12"/>
-                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Disk I/O"/><TextBlock Grid.Column="1" Text="—" Foreground="{StaticResource AccentBrush}"/></Grid>
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Working Set" ToolTip="Mémoire actuellement résidente en RAM physique pour keryxd."/><TextBlock Grid.Column="1" Text="{Binding WorkingSet}" Foreground="{StaticResource AccentBrush}"/></Grid>
                 <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,12"/>
-                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Threads"/><TextBlock Grid.Column="1" Text="—" Foreground="{StaticResource AccentBrush}"/></Grid>
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Disk I/O" ToolTip="Débits disque calculés entre deux échantillons, et non compteurs cumulés."/><TextBlock Grid.Column="1" Text="{Binding DiskIo}" Foreground="{StaticResource AccentBrush}"/></Grid>
                 <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,12"/>
-                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Peers"/><TextBlock Grid.Column="1" Text="—" Foreground="{StaticResource AccentBrush}"/></Grid>
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Threads"/><TextBlock Grid.Column="1" Text="{Binding Threads}" Foreground="{StaticResource AccentBrush}"/></Grid>
+                <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,12"/>
+                <Grid><Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock Text="Handles"/><TextBlock Grid.Column="1" Text="{Binding Handles}" Foreground="{StaticResource AccentBrush}"/></Grid>
             </StackPanel>
         </Border>
 
