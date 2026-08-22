@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Windows.Input;
 using PoolarisNodeGUI.Models;
 using PoolarisNodeGUI.Services;
@@ -39,9 +40,13 @@ public sealed class NodeLauncherViewModel : ViewModelBase
     private string _statusMessage = "Ready";
     private string _lastError = string.Empty;
 
-    public NodeLauncherViewModel()
+    public NodeLauncherViewModel() : this(new RuntimeNodeSession()) { }
+
+    public NodeLauncherViewModel(RuntimeNodeSession runtimeSession)
     {
         _processService = new KeryxProcessService(_argumentBuilder);
+        ProcessControl = new ProcessControlViewModel(runtimeSession);
+        ProcessControl.PropertyChanged += ProcessControlOnPropertyChanged;
 
         var start = new AsyncRelayCommand(StartAsync, () => ProcessState is NodeProcessState.Stopped or NodeProcessState.Failed);
         var stop = new AsyncRelayCommand(StopAsync, () => ProcessState == NodeProcessState.Running);
@@ -54,6 +59,8 @@ public sealed class NodeLauncherViewModel : ViewModelBase
         StopCommand = stop;
         RestartCommand = restart;
     }
+
+    public ProcessControlViewModel ProcessControl { get; }
 
     public string NodeExecutable { get => _nodeExecutable; set { if (SetProperty(ref _nodeExecutable, value)) RefreshComputed(); } }
     public string AppDirectory { get => _appDirectory; set { if (SetProperty(ref _appDirectory, value)) RefreshComputed(); } }
@@ -94,7 +101,6 @@ public sealed class NodeLauncherViewModel : ViewModelBase
         {
             if (!SetProperty(ref _processState, value)) return;
             OnPropertyChanged(nameof(ProcessStateLabel));
-            OnPropertyChanged(nameof(IsKillEnabled));
             RaiseCommandStates();
         }
     }
@@ -107,8 +113,7 @@ public sealed class NodeLauncherViewModel : ViewModelBase
         _ => "NODE STOPPED"
     };
 
-    public bool IsKillEnabled => ProcessState == NodeProcessState.Running && ProcessId.HasValue;
-    public int? ProcessId { get => _processId; private set { if (SetProperty(ref _processId, value)) OnPropertyChanged(nameof(IsKillEnabled)); } }
+    public int? ProcessId { get => _processId; private set => SetProperty(ref _processId, value); }
     public string StatusMessage { get => _statusMessage; private set => SetProperty(ref _statusMessage, value); }
     public string LastError { get => _lastError; private set => SetProperty(ref _lastError, value); }
 
@@ -116,20 +121,40 @@ public sealed class NodeLauncherViewModel : ViewModelBase
     public ICommand StopCommand { get; }
     public ICommand RestartCommand { get; }
 
-    public async Task<bool> ForceKillAsync()
+    public async Task<bool> KillAttachedNodeAsync()
     {
-        if (!IsKillEnabled) return false;
-        StatusMessage = "Force stopping Keryx...";
-        var killed = await _processService.ForceKillAsync();
+        var attached = ProcessControl.AttachedNode;
+        if (attached is null) return false;
+
+        StatusMessage = "Force stopping attached Keryx node...";
+
+        bool killed;
+        if (attached.IsManaged && ProcessId == attached.ProcessId)
+        {
+            killed = await _processService.ForceKillAsync();
+            if (killed)
+            {
+                ProcessId = null;
+                ProcessState = NodeProcessState.Stopped;
+                ProcessControl.DetachCommand.Execute(null);
+                ProcessControl.DetectCommand.Execute(null);
+            }
+        }
+        else
+        {
+            killed = await ProcessControl.KillAttachedAsync();
+        }
+
         if (killed)
         {
-            ProcessId = null;
-            ProcessState = NodeProcessState.Stopped;
+            LastError = string.Empty;
             StatusMessage = "Keryx process was force stopped.";
             return true;
         }
 
-        LastError = "Impossible de forcer l'arrêt du processus keryxd.";
+        LastError = ProcessControl.LastError.Length > 0
+            ? ProcessControl.LastError
+            : "Impossible de forcer l'arrêt du processus keryxd.";
         StatusMessage = "Force stop failed.";
         return false;
     }
@@ -144,6 +169,13 @@ public sealed class NodeLauncherViewModel : ViewModelBase
         ProcessState = result.Success ? NodeProcessState.Running : NodeProcessState.Failed;
         StatusMessage = result.Success ? $"Keryx is running (PID {result.ProcessId})." : "Keryx failed to start.";
         LastError = result.Error ?? result.StandardError ?? string.Empty;
+
+        if (result.Success && result.ProcessId is int pid)
+        {
+            DateTime? started = null;
+            try { started = _processService.CurrentProcess?.StartTime; } catch { }
+            ProcessControl.AttachManaged(new KeryxProcessInfo(pid, NodeExecutable, started, true));
+        }
     }
 
     private async Task StopAsync()
@@ -154,6 +186,8 @@ public sealed class NodeLauncherViewModel : ViewModelBase
         {
             ProcessId = null;
             ProcessState = NodeProcessState.Stopped;
+            ProcessControl.DetachCommand.Execute(null);
+            ProcessControl.DetectCommand.Execute(null);
             StatusMessage = "Keryx stopped.";
             return;
         }
@@ -172,7 +206,18 @@ public sealed class NodeLauncherViewModel : ViewModelBase
 
         ProcessId = null;
         ProcessState = NodeProcessState.Stopped;
+        ProcessControl.DetachCommand.Execute(null);
         await StartAsync();
+    }
+
+    private void ProcessControlOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
+    {
+        if (e.PropertyName is nameof(ProcessControlViewModel.AttachedNode)
+            or nameof(ProcessControlViewModel.CanKill)
+            or nameof(ProcessControlViewModel.AttachedNodeLabel))
+        {
+            OnPropertyChanged(nameof(ProcessControl));
+        }
     }
 
     private void OnCommandFailed(object? sender, Exception ex)
