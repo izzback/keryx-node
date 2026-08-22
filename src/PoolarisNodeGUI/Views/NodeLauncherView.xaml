@@ -32,7 +32,7 @@
                                 <TextBox Text="{Binding AppDirectory, UpdateSourceTrigger=PropertyChanged}" ToolTip="Répertoire racine Keryx. Ne sélectionnez pas directement keryx-mainnet\datadir." />
                                 <Button Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource SecondaryButtonStyle}" Content="Browse..." Click="BrowseAppDir_Click" />
                             </Grid>
-                            <TextBlock Text="{Binding ResolvedDatabasePath, StringFormat=Resolved database: {0}}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,7,0,0" TextTrimming="CharacterEllipsis" />
+                            <TextBlock Text="{Binding ResolvedDatabasePath, StringFormat='Resolved database: {0}'}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,7,0,0" TextTrimming="CharacterEllipsis" />
                         </StackPanel>
                     </Border>
 
@@ -150,11 +150,19 @@
 
         <Border Grid.Row="1" Background="{StaticResource HeaderBrush}" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="12" Margin="0,10,0,0">
             <Grid>
-                <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="Auto"/>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="Auto"/>
+                </Grid.ColumnDefinitions>
                 <Button Style="{StaticResource PrimaryButtonStyle}" Content="▶  Start Node" Command="{Binding StartCommand}" MinWidth="150" />
                 <Button Grid.Column="1" Style="{StaticResource SecondaryButtonStyle}" Content="■  Stop Node" Command="{Binding StopCommand}" MinWidth="130" Margin="10,0,0,0" />
                 <Button Grid.Column="2" Style="{StaticResource SecondaryButtonStyle}" Content="↻  Restart" Command="{Binding RestartCommand}" MinWidth="120" Margin="10,0,0,0" />
-                <StackPanel Grid.Column="4" HorizontalAlignment="Right">
+                <Button Grid.Column="3" Style="{StaticResource DangerButtonStyle}" Content="✕  Kill Node" IsEnabled="{Binding IsKillEnabled}" MinWidth="120" Margin="10,0,0,0" Click="KillNode_Click" ToolTip="Forcer la fermeture immédiate du processus keryxd. À utiliser uniquement si l’arrêt normal ne fonctionne pas." />
+                <StackPanel Grid.Column="5" HorizontalAlignment="Right">
                     <TextBlock Text="{Binding ProcessStateLabel}" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="{StaticResource SuccessBrush}" />
                     <TextBlock Text="{Binding StatusMessage}" HorizontalAlignment="Right" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,3,0,0" />
                     <TextBlock Text="{Binding LastError}" HorizontalAlignment="Right" Foreground="{StaticResource DangerBrush}" FontSize="11" MaxWidth="420" TextTrimming="CharacterEllipsis" />
