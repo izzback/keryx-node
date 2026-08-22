@@ -35,17 +35,16 @@ public sealed class ProcessPerformanceSampler
 
             if (_lastPid == processId && _lastTimestamp != default)
             {
-                var elapsed = (timestamp - _lastTimestamp).TotalSeconds;
-                if (elapsed > 0)
-                {
-                    var cpuDelta = (cpuTime - _lastCpuTime).TotalSeconds;
-                    cpuPercent = Math.Clamp(cpuDelta / (elapsed * Math.Max(1, Environment.ProcessorCount)) * 100.0, 0, 100);
+                var wallDelta = timestamp - _lastTimestamp;
+                cpuPercent = PerformanceRateCalculator.CpuPercent(
+                    cpuTime - _lastCpuTime,
+                    wallDelta,
+                    Math.Max(1, Environment.ProcessorCount));
 
-                    if (io.HasValue && _lastReadBytes.HasValue && io.Value.ReadTransferCount >= _lastReadBytes.Value)
-                        readPerSecond = (io.Value.ReadTransferCount - _lastReadBytes.Value) / elapsed;
-                    if (io.HasValue && _lastWriteBytes.HasValue && io.Value.WriteTransferCount >= _lastWriteBytes.Value)
-                        writePerSecond = (io.Value.WriteTransferCount - _lastWriteBytes.Value) / elapsed;
-                }
+                if (io.HasValue && _lastReadBytes.HasValue)
+                    readPerSecond = PerformanceRateCalculator.BytesPerSecond(io.Value.ReadTransferCount, _lastReadBytes.Value, wallDelta);
+                if (io.HasValue && _lastWriteBytes.HasValue)
+                    writePerSecond = PerformanceRateCalculator.BytesPerSecond(io.Value.WriteTransferCount, _lastWriteBytes.Value, wallDelta);
             }
 
             _lastPid = processId;
