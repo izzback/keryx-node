@@ -1,5 +1,6 @@
 using System.ComponentModel;
 using System.Windows.Threading;
+using PoolarisNodeGUI.Models;
 
 namespace PoolarisNodeGUI.Services;
 
@@ -28,30 +29,42 @@ public sealed class RuntimeRpcMonitor : IDisposable
 
     public async Task RefreshNowAsync(CancellationToken cancellationToken = default)
     {
-        if (_disposed || _refreshInFlight || _session.AttachedNode is null)
+        if (_disposed || _refreshInFlight || _session.AttachedNode is null || !_session.RpcEnabled)
             return;
 
         _refreshInFlight = true;
         _session.RpcRefreshing = true;
         try
         {
-            var snapshot = await _client
-                .GetSnapshotAsync(_session.RpcHost, _session.RpcPort, cancellationToken);
+            var attachedIdentity = _session.AttachedNode;
+            var host = _session.RpcHost;
+            var port = _session.RpcPort;
 
-            if (!_disposed && _session.AttachedNode is not null)
+            var snapshot = await _client
+                .GetSnapshotAsync(host, port, cancellationToken)
+                .ConfigureAwait(true);
+
+            if (!_disposed
+                && _session.RpcEnabled
+                && _session.AttachedNode is not null
+                && Equals(_session.AttachedNode, attachedIdentity)
+                && _session.RpcHost == host
+                && _session.RpcPort == port)
+            {
                 _session.SetRpcSnapshot(snapshot);
+            }
         }
         catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
         {
         }
         catch (Exception ex)
         {
-            if (!_disposed && _session.AttachedNode is not null)
+            if (!_disposed && _session.AttachedNode is not null && _session.RpcEnabled)
             {
-                _session.SetRpcSnapshot(new Models.KeryxRpcSnapshot(
+                _session.SetRpcSnapshot(new KeryxRpcSnapshot(
                     null,
                     null,
-                    Array.Empty<Models.KeryxPeerInfo>(),
+                    Array.Empty<KeryxPeerInfo>(),
                     ex.Message));
             }
         }
@@ -71,8 +84,7 @@ public sealed class RuntimeRpcMonitor : IDisposable
         }
         catch
         {
-            // RefreshNowAsync is defensive by design. This final guard prevents a timer
-            // callback from ever escaping into WPF's dispatcher and terminating the GUI.
+            // Never allow a background refresh callback to escape into WPF's dispatcher.
         }
     }
 
@@ -80,7 +92,8 @@ public sealed class RuntimeRpcMonitor : IDisposable
     {
         if (e.PropertyName is nameof(RuntimeNodeSession.AttachedNode)
             or nameof(RuntimeNodeSession.RpcHost)
-            or nameof(RuntimeNodeSession.RpcPort))
+            or nameof(RuntimeNodeSession.RpcPort)
+            or nameof(RuntimeNodeSession.RpcEnabled))
         {
             UpdateMonitoringState();
         }
@@ -90,7 +103,7 @@ public sealed class RuntimeRpcMonitor : IDisposable
     {
         if (_disposed) return;
 
-        if (_session.AttachedNode is null)
+        if (_session.AttachedNode is null || !_session.RpcEnabled)
         {
             _timer.Stop();
             _session.ClearRpcSnapshot();
