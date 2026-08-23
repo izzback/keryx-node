@@ -942,7 +942,16 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             .await?;
         let mut chunk_stream = PruningPointUtxosetChunkStream::new(&self.router, &mut self.incoming_route);
         let mut multiset = MuHash::new();
+        let processing_started = metrics_enabled().then(Instant::now);
+        let mut processing_chunks = 0u64;
+        let mut processing_utxos = 0u64;
+        let mut append_time = Duration::ZERO;
         while let Some(chunk) = chunk_stream.next().await? {
+            if metrics_enabled() {
+                processing_chunks = processing_chunks.saturating_add(1);
+                processing_utxos = processing_utxos.saturating_add(chunk.len() as u64);
+            }
+            let append_started = metrics_enabled().then(Instant::now);
             multiset = consensus
                 .clone()
                 .spawn_blocking(move |c| {
@@ -950,8 +959,34 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                     multiset
                 })
                 .await;
+            if let Some(append_started) = append_started {
+                append_time = append_time.saturating_add(append_started.elapsed());
+            }
         }
+        let import_started = metrics_enabled().then(Instant::now);
         consensus.clone().spawn_blocking(move |c| c.import_pruning_point_utxo_set(pruning_point, multiset)).await?;
+        let import_time = import_started.map(|started| started.elapsed()).unwrap_or(Duration::ZERO);
+        if metrics_enabled() {
+            let elapsed = processing_started.expect("metrics start is present when metrics are enabled").elapsed();
+            let elapsed_seconds = elapsed.as_secs_f64();
+            let processing_time = append_time.saturating_add(import_time);
+            let processing_ratio =
+                if elapsed_seconds == 0.0 { 0.0 } else { (processing_time.as_secs_f64() / elapsed_seconds).clamp(0.0, 1.0) };
+            let utxos_per_second = if elapsed_seconds == 0.0 { 0.0 } else { processing_utxos as f64 / elapsed_seconds };
+            let average_append_ms =
+                if processing_chunks == 0 { 0.0 } else { append_time.as_secs_f64() * 1000.0 / processing_chunks as f64 };
+            info!(
+                "IBD-V2-METRICS: stage=utxo-processing complete=true chunks={} utxos={} elapsed={:.3}s rate={:.2} utxos/s append={:.3}s avg_append={:.3}ms/chunk final_import={:.3}s processing_pct={:.1}%",
+                processing_chunks,
+                processing_utxos,
+                elapsed_seconds,
+                utxos_per_second,
+                append_time.as_secs_f64(),
+                average_append_ms,
+                import_time.as_secs_f64(),
+                processing_ratio * 100.0
+            );
+        }
         Ok(())
     }
     async fn sync_missing_trusted_bodies(&mut self, consensus: &ConsensusProxy) -> Result<(), ProtocolError> {
