@@ -63,6 +63,7 @@ jobs:
         run: |
           rustfmt --edition 2024 --check \
             protocol/flows/src/ibd_v2/*.rs \
+            protocol/flows/src/ibd/flow.rs \
             protocol/flows/src/ibd/progress.rs \
             protocol/flows/src/ibd/streams.rs
 
@@ -96,29 +97,29 @@ jobs:
           path = Path('protocol/flows/src/ibd/flow.rs')
           text = path.read_text(encoding='utf-8')
 
-          replacements = [
-              (
-                  '''use crate::{
-              flow_context::FlowContext,
-              flow_trait::Flow,
-              ibd::{HeadersChunkStream, TrustedEntryStream, negotiate::ChainNegotiationOutput},
+          def replace_once(text, label, old, new):
+              count = text.count(old)
+              if count != 1:
+                  raise SystemExit(f'{label}: expected one target, found {count}')
+              return text.replace(old, new, 1)
+
+          text = replace_once(
+              text,
+              'metrics import',
+              '''    ibd::{HeadersChunkStream, TrustedEntryStream, negotiate::ChainNegotiationOutput},
           };''',
-                  '''use crate::{
-              flow_context::FlowContext,
-              flow_trait::Flow,
-              ibd::{HeadersChunkStream, TrustedEntryStream, negotiate::ChainNegotiationOutput},
+              '''    ibd::{HeadersChunkStream, TrustedEntryStream, negotiate::ChainNegotiationOutput},
               ibd_v2::metrics::{StageMetrics, metrics_enabled},
           };''',
-              ),
-              (
-                  '''        let mut rows: Vec<Vec<u8>> = Vec::new();
-                  let mut prefix_rows = 0usize;
-                  let mut acc = MuHash::new();
+          )
+
+          text = replace_once(
+              text,
+              'service-state receive timer',
+              '''        let mut acc = MuHash::new();
                   loop {
                       match tokio::time::timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT, self.incoming_route.recv()).await {''',
-                  '''        let mut rows: Vec<Vec<u8>> = Vec::new();
-                  let mut prefix_rows = 0usize;
-                  let mut acc = MuHash::new();
+              '''        let mut acc = MuHash::new();
                   let mut metrics = StageMetrics::new();
                   loop {
                       let wait_started = metrics_enabled().then(Instant::now);
@@ -127,80 +128,57 @@ jobs:
                           metrics.record_peer_wait_time(wait_started.elapsed());
                       }
                       match received {''',
-              ),
-              (
-                  '''                    Some(Payload::ServiceStateChunk(chunk)) => {
-                              for row in chunk.rows {
-                                  let daa = service_row_daa(&row)
-                                      .ok_or(ProtocolError::Other("malformed service-state row"))?;
-                                  if daa > handoff_cutoff {
-                                      return Err(ProtocolError::Other("service-state row beyond the handoff ceiling"));
-                                  }
-                                  // The pruning point's sealed commitment covers rows at or below it.
-                                  // Handoff rows above it are vetted by the per-header commitments
-                                  // that arrive as the chain grows past them.
-                                  if daa <= pp_daa {
-                                      acc.add_element(&row);
-                                      prefix_rows += 1;
-                                  }
-                                  rows.push(row);
-                              }
-                          }''',
-                  '''                    Some(Payload::ServiceStateChunk(chunk)) => {
+          )
+
+          text = replace_once(
+              text,
+              'service-state chunk counters',
+              '''                    Some(Payload::ServiceStateChunk(chunk)) => {
+                              for row in chunk.rows {''',
+              '''                    Some(Payload::ServiceStateChunk(chunk)) => {
                               if metrics_enabled() {
                                   let chunk_rows = chunk.rows.len() as u64;
                                   let chunk_bytes = chunk.rows.iter().map(|row| row.len() as u64).sum();
                                   metrics.record_transfer(chunk_rows, chunk_bytes);
                               }
                               let validation_started = metrics_enabled().then(Instant::now);
-                              for row in chunk.rows {
-                                  let daa = service_row_daa(&row)
-                                      .ok_or(ProtocolError::Other("malformed service-state row"))?;
-                                  if daa > handoff_cutoff {
-                                      return Err(ProtocolError::Other("service-state row beyond the handoff ceiling"));
-                                  }
-                                  // The pruning point's sealed commitment covers rows at or below it.
-                                  // Handoff rows above it are vetted by the per-header commitments
-                                  // that arrive as the chain grows past them.
-                                  if daa <= pp_daa {
-                                      acc.add_element(&row);
-                                      prefix_rows += 1;
-                                  }
-                                  rows.push(row);
+                              for row in chunk.rows {''',
+          )
+
+          text = replace_once(
+              text,
+              'service-state validation timer',
+              '''                            rows.push(row);
+                              }
+                          }
+                          Some(Payload::DoneServiceStateChunks(_)) => break,''',
+              '''                            rows.push(row);
                               }
                               if let Some(validation_started) = validation_started {
                                   metrics.record_validation_time(validation_started.elapsed());
                               }
-                          }''',
-              ),
-              (
-                  '''        // Mirror `commitment_at` exactly: no rows seals nothing, and the expected value is then
-                  // the zero hash.
-                  let computed = if prefix_rows == 0 { Hash::default() } else { acc.finalize() };
-                  if computed != expected {
-                      return Err(ProtocolError::OtherOwned(format!(
-                          "service-state verification failed: peer rows hash to {}, header commits {}",
-                          computed, expected
-                      )));
-                  }
-                  let handoff_rows = rows.len() - prefix_rows;
-                  consensus.clone().spawn_blocking(move |c| c.import_service_state(rows)).await?;
-                  info!("imported {} sealed service-state rows ({} verified, {} handoff)", prefix_rows + handoff_rows, prefix_rows, handoff_rows);
-                  Ok(())''',
-                  '''        // Mirror `commitment_at` exactly: no rows seals nothing, and the expected value is then
-                  // the zero hash.
-                  let finalize_started = metrics_enabled().then(Instant::now);
+                          }
+                          Some(Payload::DoneServiceStateChunks(_)) => break,''',
+          )
+
+          text = replace_once(
+              text,
+              'service-state finalize timer',
+              '''        let computed = if prefix_rows == 0 { Hash::default() } else { acc.finalize() };''',
+              '''        let finalize_started = metrics_enabled().then(Instant::now);
                   let computed = if prefix_rows == 0 { Hash::default() } else { acc.finalize() };
                   if let Some(finalize_started) = finalize_started {
                       metrics.record_validation_time(finalize_started.elapsed());
-                  }
-                  if computed != expected {
-                      return Err(ProtocolError::OtherOwned(format!(
-                          "service-state verification failed: peer rows hash to {}, header commits {}",
-                          computed, expected
-                      )));
-                  }
-                  let handoff_rows = rows.len() - prefix_rows;
+                  }''',
+          )
+
+          text = replace_once(
+              text,
+              'service-state storage and summary',
+              '''        let handoff_rows = rows.len() - prefix_rows;
+                  consensus.clone().spawn_blocking(move |c| c.import_service_state(rows)).await?;
+                  info!("imported {} sealed service-state rows ({} verified, {} handoff)", prefix_rows + handoff_rows, prefix_rows, handoff_rows);''',
+              '''        let handoff_rows = rows.len() - prefix_rows;
                   let storage_started = metrics_enabled().then(Instant::now);
                   consensus.clone().spawn_blocking(move |c| c.import_service_state(rows)).await?;
                   if let Some(storage_started) = storage_started {
@@ -222,16 +200,8 @@ jobs:
                           metrics.validation_time.as_secs_f64(),
                           metrics.storage_time.as_secs_f64()
                       );
-                  }
-                  Ok(())''',
-              ),
-          ]
-
-          for old, new in replacements:
-              count = text.count(old)
-              if count != 1:
-                  raise SystemExit(f'expected exactly one replacement target, found {count}')
-              text = text.replace(old, new, 1)
+                  }''',
+          )
 
           path.write_text(text, encoding='utf-8')
 
