@@ -92,7 +92,14 @@ public sealed class NodeLauncherViewModel : ViewModelBase
     public IReadOnlyList<string> RocksDbPresets { get; } = new[] { "default", "hdd", "hdd-qd1" };
 
     public string ResolvedDatabasePath => KeryxPathResolver.ResolveDatabasePath(AppDirectory, IsTestnet);
-    public string GeneratedCommand => _argumentBuilder.BuildDisplayCommand(CreateSettings());
+
+    // WPF TextBox.Text binds TwoWay by default, even when the TextBox is read-only.
+    // Keep a no-op setter so loading the Node Launcher cannot throw on this derived value.
+    public string GeneratedCommand
+    {
+        get => _argumentBuilder.BuildDisplayCommand(CreateSettings());
+        set { }
+    }
 
     public NodeProcessState ProcessState
     {
