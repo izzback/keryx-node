@@ -15,7 +15,7 @@
         <DataTemplate DataType="{x:Type vm:DashboardViewModel}"><views:DashboardView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:NodeLauncherViewModel}"><views:NodeLauncherView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:PeersViewModel}"><views:PeersView /></DataTemplate>
-        <DataTemplate DataType="{x:Type vm:PerformanceViewModel}"><views:PerformanceView /></DataTemplate>
+        <DataTemplate DataType="{x:Type vm:PerformancePageViewModel}"><views:PerformanceView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:LogsViewModel}"><views:LogsView /></DataTemplate>
         <DataTemplate DataType="{x:Type vm:SettingsViewModel}"><views:SettingsView /></DataTemplate>
     </Window.Resources>
