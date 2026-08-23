@@ -12,8 +12,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly NodeLauncherViewModel _launcher;
     private readonly PeersViewModel _peers;
     private readonly PerformancePageViewModel _performance;
-    private readonly LogsViewModel _logs;
-    private readonly SettingsViewModel _settings;
+    private readonly LogsPageViewModel _logs;
+    private readonly SettingsPageViewModel _settings;
 
     private ViewModelBase _currentPage;
     private string _currentPageTitle = "Dashboard";
@@ -28,8 +28,8 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _launcher = new NodeLauncherViewModel(_runtimeSession);
         _peers = new PeersViewModel(_runtimeSession);
         _performance = new PerformancePageViewModel(_runtimeSession);
-        _logs = new LogsViewModel();
-        _settings = new SettingsViewModel();
+        _logs = new LogsPageViewModel(_launcher);
+        _settings = new SettingsPageViewModel(_launcher, _runtimeSession);
 
         _currentPage = _dashboard;
         _launcher.PropertyChanged += LauncherOnPropertyChanged;
@@ -109,5 +109,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _dashboard.Dispose();
         _peers.Dispose();
         _performance.Dispose();
+        _logs.Dispose();
+        _settings.Dispose();
     }
 }
