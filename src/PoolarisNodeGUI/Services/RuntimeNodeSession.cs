@@ -12,6 +12,7 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
     private string _rpcHost = "127.0.0.1";
     private int _rpcPort = 22110;
     private bool _rpcEndpointVerified;
+    private bool _rpcEnabled = true;
     private KeryxRpcSnapshot? _rpcSnapshot;
     private DateTime? _rpcLastUpdated;
     private bool _rpcRefreshing;
@@ -82,6 +83,20 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
         }
     }
 
+    public bool RpcEnabled
+    {
+        get => _rpcEnabled;
+        private set
+        {
+            if (_rpcEnabled == value) return;
+            _rpcEnabled = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RpcEndpointDisplay));
+            OnPropertyChanged(nameof(RpcConnected));
+            OnPropertyChanged(nameof(RpcStatus));
+        }
+    }
+
     public KeryxRpcSnapshot? RpcSnapshot
     {
         get => _rpcSnapshot;
@@ -125,16 +140,20 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
     public bool CanDetach => AttachedNode is not null;
     public string AttachedNodeLabel => AttachedNode?.DisplayName ?? "No node attached";
     public string AttachedPid => AttachedNode?.ProcessId.ToString() ?? "—";
-    public string RpcEndpointDisplay => $"{RpcHost}:{RpcPort} ({(RpcEndpointVerified ? "verified" : "default")})";
-    public bool RpcConnected => IsAttached && RpcSnapshot is { Error: null, Info: not null };
+    public string RpcEndpointDisplay => !RpcEnabled
+        ? "Disabled"
+        : $"{RpcHost}:{RpcPort} ({(RpcEndpointVerified ? "verified" : "default")})";
+    public bool RpcConnected => IsAttached && RpcEnabled && RpcSnapshot is { Error: null, Info: not null };
     public string RpcError => RpcSnapshot?.Error ?? string.Empty;
     public string RpcStatus => !IsAttached
         ? "Unavailable"
-        : RpcRefreshing && RpcSnapshot is null
-            ? "Connecting..."
-            : RpcConnected
-                ? "Connected"
-                : string.IsNullOrWhiteSpace(RpcError) ? "Unavailable" : "Error";
+        : !RpcEnabled
+            ? "Disabled"
+            : RpcRefreshing && RpcSnapshot is null
+                ? "Connecting..."
+                : RpcConnected
+                    ? "Connected"
+                    : string.IsNullOrWhiteSpace(RpcError) ? "Unavailable" : "Error";
     public string RpcLastUpdatedDisplay => RpcLastUpdated?.ToLocalTime().ToString("HH:mm:ss") ?? "—";
 
     public void Detect()
@@ -162,29 +181,31 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
             return false;
 
         AttachedNode = SelectedNode;
-        SetRpcEndpoint("127.0.0.1", 22110, verified: false);
-        ClearRpcSnapshot();
+        ConfigureRpc("127.0.0.1", 22110, enabled: true, verified: false);
         return true;
     }
 
-    public void AttachManaged(KeryxProcessInfo node, int rpcPort)
+    public void AttachManaged(KeryxProcessInfo node, int rpcPort, bool rpcEnabled = true)
     {
         AttachedNode = node with { IsManaged = true };
         SelectedNode = AttachedNode;
-        SetRpcEndpoint("127.0.0.1", rpcPort, verified: true);
-        ClearRpcSnapshot();
+        ConfigureRpc("127.0.0.1", rpcPort, enabled: rpcEnabled, verified: rpcEnabled);
         if (DetectedNodes.All(x => x.ProcessId != node.ProcessId))
             DetectedNodes.Add(AttachedNode);
         OnPropertyChanged(nameof(DetectedCount));
     }
 
-    public void SetRpcEndpoint(string host, int port, bool verified)
+    public void ConfigureRpc(string host, int port, bool enabled, bool verified)
     {
         RpcHost = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim();
         RpcPort = port is >= 1 and <= 65535 ? port : 22110;
-        RpcEndpointVerified = verified;
+        RpcEnabled = enabled;
+        RpcEndpointVerified = enabled && verified;
         ClearRpcSnapshot();
     }
+
+    public void SetRpcEndpoint(string host, int port, bool verified)
+        => ConfigureRpc(host, port, enabled: true, verified);
 
     internal void SetRpcSnapshot(KeryxRpcSnapshot snapshot)
     {
