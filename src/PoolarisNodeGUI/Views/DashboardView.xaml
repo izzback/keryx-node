@@ -16,7 +16,11 @@
             <Grid>
                 <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                 <StackPanel>
-                    <TextBlock Text="◇  NODE CONTROL" Style="{StaticResource SectionTitleStyle}" />
+                    <Grid>
+                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                        <TextBlock Text="◇  NODE CONTROL" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Grid.Column="1" Text="{Binding NodeMode}" Foreground="{StaticResource AccentBrush}" FontSize="10" FontWeight="SemiBold" />
+                    </Grid>
                     <TextBlock Text="Keryx process" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,18,0,5" />
                     <TextBlock Text="{Binding NodeLabel}" FontSize="18" FontWeight="SemiBold" />
                     <TextBlock Text="{Binding NodeExecutable}" TextWrapping="Wrap" Foreground="{StaticResource MutedTextBrush}" Margin="0,7,0,0" TextTrimming="CharacterEllipsis" />
@@ -26,7 +30,7 @@
                     <Grid>
                         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <TextBlock Text="Version" Foreground="{StaticResource MutedTextBrush}" />
-                        <TextBlock Grid.Column="1" Text="—" />
+                        <TextBlock Grid.Column="1" Text="{Binding NodeVersion}" />
                     </Grid>
                     <Grid Margin="0,9,0,0">
                         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -40,18 +44,15 @@
                     </Grid>
                     <Grid Margin="0,9,0,0">
                         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                        <TextBlock Text="Started" Foreground="{StaticResource MutedTextBrush}" />
-                        <TextBlock Grid.Column="1" Text="{Binding NodeStarted}" />
-                    </Grid>
-                    <Grid Margin="0,9,0,0">
-                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                         <TextBlock Text="RPC" Foreground="{StaticResource MutedTextBrush}" />
-                        <TextBlock Grid.Column="1" Text="Unavailable" Foreground="{StaticResource WarningBrush}" />
+                        <TextBlock Grid.Column="1" Text="{Binding RpcStatus}" Foreground="{StaticResource AccentBrush}" />
                     </Grid>
+                    <TextBlock Text="{Binding RpcEndpoint}" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,5,0,0" TextTrimming="CharacterEllipsis" />
+                    <TextBlock Text="{Binding RpcError}" Foreground="{StaticResource DangerBrush}" FontSize="10" Margin="0,5,0,0" TextWrapping="Wrap" MaxHeight="48" />
                 </StackPanel>
 
                 <StackPanel Grid.Row="2">
-                    <TextBlock Text="Attach ou lance un node depuis Node Launcher. Fermer Poolaris ne doit jamais arrêter keryxd automatiquement." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="10" />
+                    <TextBlock Text="Fermer Poolaris ne doit jamais arrêter keryxd automatiquement." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="10" />
                     <TextBlock Text="Poolaris ne modifie jamais directement RocksDB." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="10" Margin="0,7,0,0" />
                 </StackPanel>
             </Grid>
@@ -62,38 +63,52 @@
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <TextBlock Text="◈  SYNC OVERVIEW" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Grid.Column="1" Text="UNKNOWN" Foreground="{StaticResource MutedTextBrush}" FontWeight="SemiBold" />
+                    <TextBlock Grid.Column="1" Text="{Binding SyncState}" Foreground="{StaticResource AccentBrush}" FontWeight="SemiBold" />
                 </Grid>
-                <TextBlock Text="Sync Progress" Foreground="{StaticResource MutedTextBrush}" Margin="0,16,0,6" />
-                <Border Height="20" Background="#03111D" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="4">
-                    <Grid><TextBlock Text="Waiting for a reliable sync source" FontSize="10" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" VerticalAlignment="Center" /></Grid>
-                </Border>
+
+                <Grid Margin="0,14,0,0">
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="NETWORK" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                        <TextBlock Text="{Binding NetworkName}" FontSize="16" FontWeight="SemiBold" Margin="0,4,0,0" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                        <TextBlock Text="RPC UPDATED" Foreground="{StaticResource MutedTextBrush}" FontSize="10" HorizontalAlignment="Right" />
+                        <TextBlock Text="{Binding RpcLastUpdated}" FontSize="14" Margin="0,4,0,0" HorizontalAlignment="Right" />
+                    </StackPanel>
+                </Grid>
+
+                <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,14,0,0" />
 
                 <UniformGrid Columns="3" Margin="0,18,0,0">
                     <StackPanel>
-                        <TextBlock Text="ESTIMATED REMAINING" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
-                        <TextBlock Text="—" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
+                        <TextBlock Text="BLOCK COUNT" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                        <TextBlock Text="{Binding BlockCount}" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
                     </StackPanel>
                     <StackPanel>
-                        <TextBlock Text="CURRENT BLOCKS / S" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
-                        <TextBlock Text="—" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
+                        <TextBlock Text="HEADER COUNT" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                        <TextBlock Text="{Binding HeaderCount}" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
                     </StackPanel>
                     <StackPanel>
-                        <TextBlock Text="ESTIMATED ETA" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
-                        <TextBlock Text="—" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
+                        <TextBlock Text="VIRTUAL DAA" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                        <TextBlock Text="{Binding VirtualDaaScore}" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
                     </StackPanel>
                 </UniformGrid>
 
                 <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,18,0,14" />
                 <Grid>
-                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                     <StackPanel>
-                        <TextBlock Text="LOCAL BLOCK TIME" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
-                        <TextBlock Text="—" FontSize="16" Margin="0,5,0,0" />
+                        <TextBlock Text="MEMPOOL" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                        <TextBlock Text="{Binding MempoolSize}" FontSize="16" Margin="0,5,0,0" />
                     </StackPanel>
                     <StackPanel Grid.Column="1">
-                        <TextBlock Text="NETWORK TARGET" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
-                        <TextBlock Text="Unavailable" FontSize="16" Margin="0,5,0,0" />
+                        <TextBlock Text="UTXO INDEX" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                        <TextBlock Text="{Binding UtxoIndex}" FontSize="16" Margin="0,5,0,0" />
+                    </StackPanel>
+                    <StackPanel Grid.Column="2">
+                        <TextBlock Text="DIFFICULTY" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                        <TextBlock Text="{Binding Difficulty}" FontSize="16" Margin="0,5,0,0" />
                     </StackPanel>
                 </Grid>
             </StackPanel>
@@ -121,19 +136,27 @@
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                     <TextBlock Text="◎  PEERS" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Grid.Column="1" Text="View all" Foreground="{StaticResource AccentBrush}" />
+                    <TextBlock Grid.Column="1" Text="RPC LIVE" Foreground="{StaticResource AccentBrush}" FontSize="10" />
                 </Grid>
-                <Grid Margin="0,16,0,8">
-                    <Grid.ColumnDefinitions><ColumnDefinition Width="2*"/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
-                    <TextBlock Text="Peer" Foreground="{StaticResource MutedTextBrush}"/>
-                    <TextBlock Grid.Column="1" Text="Direction" Foreground="{StaticResource MutedTextBrush}"/>
-                    <TextBlock Grid.Column="2" Text="Ping" Foreground="{StaticResource MutedTextBrush}"/>
-                    <TextBlock Grid.Column="3" Text="IBD Source" Foreground="{StaticResource MutedTextBrush}"/>
-                    <TextBlock Grid.Column="4" Text="Status" Foreground="{StaticResource MutedTextBrush}"/>
-                </Grid>
-                <Border Height="1" Background="{StaticResource BorderBrush}" />
-                <TextBlock Text="No peer data available" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Center" Margin="0,34,0,0" />
-                <TextBlock Text="IBD Source est un booléen Keryx (YES/NO), jamais un pourcentage par peer." Foreground="{StaticResource MutedTextBrush}" FontSize="10" HorizontalAlignment="Center" Margin="0,8,0,0" />
+
+                <UniformGrid Columns="3" Margin="0,18,0,0">
+                    <StackPanel>
+                        <TextBlock Text="CONNECTED" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                        <TextBlock Text="{Binding PeerCount}" FontSize="24" FontWeight="SemiBold" Margin="0,5,0,0" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="IN / OUT" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                        <TextBlock Text="{Binding InboundOutbound}" FontSize="24" FontWeight="SemiBold" Margin="0,5,0,0" />
+                    </StackPanel>
+                    <StackPanel>
+                        <TextBlock Text="IBD SOURCE" Foreground="{StaticResource MutedTextBrush}" FontSize="10" />
+                        <TextBlock Text="{Binding IbdSource}" FontSize="14" FontWeight="SemiBold" Margin="0,7,0,0" TextTrimming="CharacterEllipsis" />
+                    </StackPanel>
+                </UniformGrid>
+
+                <Border Height="1" Background="{StaticResource BorderBrush}" Margin="0,18,0,14" />
+                <TextBlock Text="La page Peers affiche l’adresse, la direction, la valeur de ping RPC brute, le protocole et le booléen IBD Source." Foreground="{StaticResource MutedTextBrush}" TextWrapping="Wrap" FontSize="10" />
+                <TextBlock Text="IBD Source est un booléen Keryx (YES/NO), jamais un pourcentage par peer." Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,7,0,0" />
             </StackPanel>
         </Border>
 
@@ -141,14 +164,16 @@
             <StackPanel>
                 <Grid>
                     <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-                    <TextBlock Text="▤  LOGS (LATEST)" Style="{StaticResource SectionTitleStyle}" />
-                    <TextBlock Grid.Column="1" Text="View full logs" Foreground="{StaticResource AccentBrush}" />
+                    <TextBlock Text="▤  RPC / LOG STATUS" Style="{StaticResource SectionTitleStyle}" />
+                    <TextBlock Grid.Column="1" Text="{Binding RpcStatus}" Foreground="{StaticResource AccentBrush}" FontSize="10" />
                 </Grid>
                 <Border Background="#020A12" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="5" Margin="0,14,0,0" Padding="10" MinHeight="160">
                     <StackPanel>
                         <TextBlock Text="INFO   Poolaris Node GUI is ready." Foreground="{StaticResource SuccessBrush}" FontFamily="Consolas" FontSize="11" />
-                        <TextBlock Text="INFO   Select or attach a Keryx node to begin." Foreground="{StaticResource MutedTextBrush}" FontFamily="Consolas" FontSize="11" Margin="0,6,0,0" />
+                        <TextBlock Text="{Binding RpcEndpoint, StringFormat=RPC    {0}}" Foreground="{StaticResource MutedTextBrush}" FontFamily="Consolas" FontSize="11" Margin="0,6,0,0" />
+                        <TextBlock Text="{Binding RpcLastUpdated, StringFormat=RPC    last update {0}}" Foreground="{StaticResource MutedTextBrush}" FontFamily="Consolas" FontSize="11" Margin="0,6,0,0" />
                         <TextBlock Text="INFO   Unavailable values remain displayed as —." Foreground="{StaticResource MutedTextBrush}" FontFamily="Consolas" FontSize="11" Margin="0,6,0,0" />
+                        <TextBlock Text="{Binding RpcError}" Foreground="{StaticResource DangerBrush}" FontFamily="Consolas" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
                     </StackPanel>
                 </Border>
             </StackPanel>
