@@ -133,7 +133,7 @@ impl<'a, 'b> HeadersChunkStream<'a, 'b> {
         let received = timeout(DEFAULT_TIMEOUT, self.incoming_route.recv()).await;
         self.metrics.record_peer_wait_time(wait_started.elapsed());
 
-        let res = match received {
+        let res: Result<Option<HeadersChunk>, ProtocolError> = match received {
             Ok(op) => {
                 if let Some(msg) = op {
                     match msg.payload {
