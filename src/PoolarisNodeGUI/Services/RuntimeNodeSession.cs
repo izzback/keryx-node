@@ -142,8 +142,8 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
     public string AttachedPid => AttachedNode?.ProcessId.ToString() ?? "—";
     public string RpcEndpointDisplay => !RpcEnabled
         ? "Disabled"
-        : $"{RpcHost}:{RpcPort} ({(RpcEndpointVerified ? "verified" : "default")})";
-    public bool RpcConnected => IsAttached && RpcEnabled && RpcSnapshot?.Info is not null;
+        : $"{RpcHost}:{RpcPort} ({(RpcEndpointVerified ? "verified" : "unverified")})";
+    public bool RpcConnected => IsAttached && RpcEnabled && RpcSnapshot is { Info: not null };
     public string RpcError => RpcSnapshot?.Error ?? string.Empty;
     public string RpcStatus => !IsAttached
         ? "Unavailable"
@@ -152,7 +152,7 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
             : RpcRefreshing && RpcSnapshot is null
                 ? "Connecting..."
                 : RpcConnected
-                    ? "Connected"
+                    ? string.IsNullOrWhiteSpace(RpcError) ? "Connected" : "Connected (partial)"
                     : string.IsNullOrWhiteSpace(RpcError) ? "Unavailable" : "Error";
     public string RpcLastUpdatedDisplay => RpcLastUpdated?.ToLocalTime().ToString("HH:mm:ss") ?? "—";
 
@@ -189,7 +189,7 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
     {
         AttachedNode = node with { IsManaged = true };
         SelectedNode = AttachedNode;
-        ConfigureRpc("127.0.0.1", rpcPort, enabled: rpcEnabled, verified: rpcEnabled);
+        ConfigureRpc("127.0.0.1", rpcPort, enabled: rpcEnabled, verified: false);
         if (DetectedNodes.All(x => x.ProcessId != node.ProcessId))
             DetectedNodes.Add(AttachedNode);
         OnPropertyChanged(nameof(DetectedCount));
@@ -211,7 +211,7 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
     {
         RpcSnapshot = snapshot;
         RpcLastUpdated = DateTime.UtcNow;
-        if (snapshot.Info is not null)
+        if (RpcEnabled && IsAttached && snapshot.Info is not null)
             RpcEndpointVerified = true;
     }
 
