@@ -6,6 +6,11 @@ on:
       - ibd-connectivity-test
     paths:
       - .github/workflows/ibd-connectivity-test.yml
+  pull_request:
+    branches:
+      - master
+    paths:
+      - .github/workflows/ibd-connectivity-test.yml
   workflow_dispatch:
 
 jobs:
@@ -89,7 +94,4 @@ jobs:
           print(f"  DNS      : {'OK' if addresses else 'FAIL'}")
           print(f"  P2P 22111: {'OPEN' if results.get(22111) else 'NOT REACHABLE'}")
           print(f"  HTTPS 443: {'OPEN' if results.get(443) else 'NOT REACHABLE'}")
-
-          # Keep the workflow successful when DNS works so the logs remain easy to inspect.
-          # Port status is reported explicitly above and is the result of this diagnostic.
           PY
