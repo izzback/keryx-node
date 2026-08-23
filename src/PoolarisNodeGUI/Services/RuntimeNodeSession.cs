@@ -143,7 +143,7 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
     public string RpcEndpointDisplay => !RpcEnabled
         ? "Disabled"
         : $"{RpcHost}:{RpcPort} ({(RpcEndpointVerified ? "verified" : "default")})";
-    public bool RpcConnected => IsAttached && RpcEnabled && RpcSnapshot is { Error: null, Info: not null };
+    public bool RpcConnected => IsAttached && RpcEnabled && RpcSnapshot?.Info is not null;
     public string RpcError => RpcSnapshot?.Error ?? string.Empty;
     public string RpcStatus => !IsAttached
         ? "Unavailable"
@@ -211,6 +211,8 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
     {
         RpcSnapshot = snapshot;
         RpcLastUpdated = DateTime.UtcNow;
+        if (snapshot.Info is not null)
+            RpcEndpointVerified = true;
     }
 
     internal void ClearRpcSnapshot()
