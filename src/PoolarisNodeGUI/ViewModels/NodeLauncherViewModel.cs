@@ -174,7 +174,10 @@ public sealed class NodeLauncherViewModel : ViewModelBase
         {
             DateTime? started = null;
             try { started = _processService.CurrentProcess?.StartTime; } catch { }
-            ProcessControl.AttachManaged(new KeryxProcessInfo(pid, NodeExecutable, started, true));
+            ProcessControl.AttachManaged(
+                new KeryxProcessInfo(pid, NodeExecutable, started, true),
+                GrpcPort,
+                EnableGrpc);
         }
     }
 
