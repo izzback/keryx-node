@@ -45,16 +45,21 @@ jobs:
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Install Rust toolchain
+      # Keep the IBD v2 validation environment stable. The upstream repository
+      # also pins its lint job to 1.93.0, so new Rust lints cannot randomly turn
+      # unrelated baseline code into IBD v2 failures.
+      - name: Install pinned Rust toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
+          toolchain: 1.93.0
           components: rustfmt, clippy
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          shared-key: ibd-v2-flows
+          shared-key: ibd-v2-flows-rust-1.93
+          cache-on-failure: true
 
       - name: Check formatting of IBD v2 touch points
         shell: bash
@@ -64,11 +69,16 @@ jobs:
             protocol/flows/src/ibd/progress.rs \
             protocol/flows/src/ibd/streams.rs
 
+      # Compile dependencies normally: this still catches API breakage between
+      # Keryx crates and IBD v2.
       - name: Check P2P flows crate
         run: cargo check -p keryx-p2p-flows --all-targets
 
+      # Lint only the target crate. Existing warnings in unrelated upstream
+      # dependencies (for example keryx-inference) are baseline debt and must not
+      # make the isolated IBD v2 gate red.
       - name: Clippy P2P flows crate
-        run: cargo clippy -p keryx-p2p-flows --all-targets -- -D warnings
+        run: cargo clippy -p keryx-p2p-flows --all-targets --no-deps -- -D warnings
 
       - name: Test P2P flows crate
         run: cargo test -p keryx-p2p-flows
