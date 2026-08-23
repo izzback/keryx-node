@@ -61,7 +61,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private void Navigate(object? parameter)
     {
         var key = parameter as string ?? "Dashboard";
-        (CurrentPage, CurrentPageTitle) = key switch
+        (ViewModelBase Page, string Title) target = key switch
         {
             "NodeLauncher" => (_launcher, "Node Launcher"),
             "Peers" => (_peers, "Peers"),
@@ -70,6 +70,9 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
             "Settings" => (_settings, "Settings"),
             _ => (_dashboard, "Dashboard")
         };
+
+        CurrentPage = target.Page;
+        CurrentPageTitle = target.Title;
     }
 
     private void LauncherOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
