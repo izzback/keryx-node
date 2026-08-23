@@ -16,8 +16,8 @@ public sealed class MainViewModelTests
     [InlineData("NodeLauncher", typeof(NodeLauncherViewModel), "Node Launcher")]
     [InlineData("Peers", typeof(PeersViewModel), "Peers")]
     [InlineData("Performance", typeof(PerformancePageViewModel), "Performance")]
-    [InlineData("Logs", typeof(LogsViewModel), "Logs")]
-    [InlineData("Settings", typeof(SettingsViewModel), "Settings")]
+    [InlineData("Logs", typeof(LogsPageViewModel), "Logs")]
+    [InlineData("Settings", typeof(SettingsPageViewModel), "Settings")]
     public void NavigationChangesPage(string key, Type expectedType, string expectedTitle)
     {
         using var vm = new MainViewModel();
