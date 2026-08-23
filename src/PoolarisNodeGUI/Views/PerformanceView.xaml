@@ -1,1 +1,223 @@
-<UserControl x:Class="PoolarisNodeGUI.Views.PerformanceView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"><Border Style="{StaticResource CardStyle}"><StackPanel><TextBlock Text="PERFORMANCE" FontWeight="Bold"/><TextBlock Text="CPU, RAM, disk I/O and block-rate history will appear here." Foreground="{StaticResource MutedTextBrush}" Margin="0,16,0,0"/></StackPanel></Border></UserControl>
+<UserControl x:Class="PoolarisNodeGUI.Views.PerformanceView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <StackPanel MaxWidth="1380">
+            <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                <Grid>
+                    <Grid.ColumnDefinitions>
+                        <ColumnDefinition Width="*"/>
+                        <ColumnDefinition Width="Auto"/>
+                    </Grid.ColumnDefinitions>
+                    <StackPanel>
+                        <TextBlock Text="REAL-TIME PERFORMANCE" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Text="Windows process counters and Keryx GetMetrics are displayed separately so the source of every value stays explicit."
+                                   Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,6,0,0" TextWrapping="Wrap" />
+                        <StackPanel Orientation="Horizontal" Margin="0,12,0,0">
+                            <TextBlock Text="Node: " Foreground="{StaticResource MutedTextBrush}" />
+                            <TextBlock Text="{Binding NodeLabel}" FontWeight="SemiBold" />
+                            <TextBlock Text="   PID: " Foreground="{StaticResource MutedTextBrush}" />
+                            <TextBlock Text="{Binding NodePid}" />
+                            <TextBlock Text="   Mode: " Foreground="{StaticResource MutedTextBrush}" />
+                            <TextBlock Text="{Binding NodeMode}" Foreground="{StaticResource AccentBrush}" />
+                        </StackPanel>
+                    </StackPanel>
+                    <StackPanel Grid.Column="1" HorizontalAlignment="Right">
+                        <TextBlock Text="{Binding RpcStatus, StringFormat=RPC: {0}}" HorizontalAlignment="Right" />
+                        <TextBlock Text="{Binding MetricsStatus, StringFormat=GetMetrics: {0}}" Foreground="{StaticResource AccentBrush}" HorizontalAlignment="Right" Margin="0,4,0,0" />
+                        <TextBlock Text="{Binding RpcEndpoint}" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Right" FontSize="11" Margin="0,4,0,0" />
+                        <TextBlock Text="{Binding LastUpdated, StringFormat=Updated: {0}}" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Right" FontSize="11" Margin="0,2,0,0" />
+                    </StackPanel>
+                </Grid>
+            </Border>
+
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="*"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="WINDOWS PROCESS — EXACT ATTACHED PID" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Text="First CPU and disk-rate samples are intentionally unavailable until two measurements exist."
+                                   Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,6,0,14" TextWrapping="Wrap" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="CPU Usage" Foreground="{StaticResource MutedTextBrush}" ToolTip="Pourcentage de la capacité CPU totale de la machine utilisée par le PID keryxd attaché." />
+                                <TextBlock Text="{Binding WindowsCpu}" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Private Memory" Foreground="{StaticResource MutedTextBrush}" ToolTip="Mémoire privée réservée au processus keryxd selon Windows." />
+                                <TextBlock Text="{Binding WindowsPrivateMemory}" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Working Set" Foreground="{StaticResource MutedTextBrush}" ToolTip="Mémoire actuellement résidente en RAM physique pour keryxd." />
+                                <TextBlock Text="{Binding WindowsWorkingSet}" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Separator Margin="0,16,0,14" Background="{StaticResource BorderBrush}" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Disk Read" Foreground="{StaticResource MutedTextBrush}" ToolTip="Débit de lecture calculé à partir des compteurs I/O Windows entre deux échantillons." />
+                                <TextBlock Text="{Binding WindowsDiskRead}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Disk Write" Foreground="{StaticResource MutedTextBrush}" ToolTip="Débit d’écriture calculé à partir des compteurs I/O Windows entre deux échantillons." />
+                                <TextBlock Text="{Binding WindowsDiskWrite}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Threads" Foreground="{StaticResource MutedTextBrush}" />
+                                <TextBlock Text="{Binding WindowsThreads}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="3">
+                                <TextBlock Text="Handles" Foreground="{StaticResource MutedTextBrush}" />
+                                <TextBlock Text="{Binding WindowsHandles}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="KERYX RPC — GetMetrics.ProcessMetrics" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Text="Values in this card are returned directly by keryxd and are not substituted with Windows counters."
+                                   Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,6,0,14" TextWrapping="Wrap" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="CPU Usage (RPC)" Foreground="{StaticResource MutedTextBrush}" ToolTip="Valeur cpuUsage retournée par GetMetrics.ProcessMetrics." />
+                                <TextBlock Text="{Binding KeryxCpu}" FontSize="22" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" Margin="0,5,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Resident Set" Foreground="{StaticResource MutedTextBrush}" />
+                                <TextBlock Text="{Binding KeryxResidentSet}" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="Virtual Memory" Foreground="{StaticResource MutedTextBrush}" ToolTip="Espace mémoire virtuel rapporté par le node ; ce n’est pas nécessairement de la RAM physique consommée." />
+                                <TextBlock Text="{Binding KeryxVirtualMemory}" FontSize="22" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                        </Grid>
+
+                        <Separator Margin="0,16,0,14" Background="{StaticResource BorderBrush}" />
+
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel>
+                                <TextBlock Text="Disk Read" Foreground="{StaticResource MutedTextBrush}" />
+                                <TextBlock Text="{Binding KeryxDiskRead}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                                <TextBlock Text="{Binding KeryxDiskReadTotal, StringFormat=Total {0}}" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,3,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="1">
+                                <TextBlock Text="Disk Write" Foreground="{StaticResource MutedTextBrush}" />
+                                <TextBlock Text="{Binding KeryxDiskWrite}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                                <TextBlock Text="{Binding KeryxDiskWriteTotal, StringFormat=Total {0}}" Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,3,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="2">
+                                <TextBlock Text="CPU Cores" Foreground="{StaticResource MutedTextBrush}" />
+                                <TextBlock Text="{Binding KeryxCoreCount}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                            <StackPanel Grid.Column="3">
+                                <TextBlock Text="File Descriptors" Foreground="{StaticResource MutedTextBrush}" />
+                                <TextBlock Text="{Binding KeryxFileDescriptors}" FontWeight="SemiBold" Margin="0,5,0,0" />
+                            </StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Grid Margin="0,0,0,12">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="1.05*"/>
+                    <ColumnDefinition Width="12"/>
+                    <ColumnDefinition Width="0.95*"/>
+                </Grid.ColumnDefinitions>
+
+                <Border Grid.Column="0" Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="CONSENSUS &amp; STORAGE" Style="{StaticResource SectionTitleStyle}" />
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Blocks" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding BlockCount}" FontSize="17" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="1"><TextBlock Text="Headers" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding HeaderCount}" FontSize="17" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="2"><TextBlock Text="Virtual DAA" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding VirtualDaaScore}" FontSize="17" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="3"><TextBlock Text="Mempool" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding MempoolSize}" FontSize="17" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="4"><TextBlock Text="Storage" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding StorageSize}" FontSize="17" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                        </Grid>
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Difficulty" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding Difficulty}" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="1"><TextBlock Text="Blocks Submitted" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding BlocksSubmitted}" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="2"><TextBlock Text="Header Events" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding HeaderCountEvents}" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="3"><TextBlock Text="Body Events" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding BodyCountEvents}" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="4"><TextBlock Text="TX Events" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding TransactionCountEvents}" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Grid.Column="2" Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="CONNECTIONS &amp; BANDWIDTH" Style="{StaticResource SectionTitleStyle}" />
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Active Peers" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding ActivePeers}" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="1"><TextBlock Text="Borsh Connections" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding BorshConnections}" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="2"><TextBlock Text="JSON Connections" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding JsonConnections}" FontSize="20" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                        </Grid>
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Network TX total" Foreground="{StaticResource MutedTextBrush}" ToolTip="Somme des compteurs TX Borsh, JSON, gRPC P2P et gRPC user retournés par Keryx."/><TextBlock Text="{Binding NetworkTxTotal}" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="1"><TextBlock Text="Network RX total" Foreground="{StaticResource MutedTextBrush}" ToolTip="Somme des compteurs RX Borsh, JSON, gRPC P2P et gRPC user retournés par Keryx."/><TextBlock Text="{Binding NetworkRxTotal}" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                        </Grid>
+                        <Grid Margin="0,16,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                            <StackPanel><TextBlock Text="Borsh handshake failures" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding BorshHandshakeFailures}" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                            <StackPanel Grid.Column="1"><TextBlock Text="JSON handshake failures" Foreground="{StaticResource MutedTextBrush}"/><TextBlock Text="{Binding JsonHandshakeFailures}" FontWeight="SemiBold" Margin="0,4,0,0"/></StackPanel>
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </Grid>
+
+            <Border Style="{StaticResource CardStyle}">
+                <StackPanel>
+                    <Grid>
+                        <TextBlock Text="RECENT HISTORY — 120 SAMPLES MAX" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Text="Newest first" Foreground="{StaticResource MutedTextBrush}" HorizontalAlignment="Right" FontSize="11" />
+                    </Grid>
+                    <DataGrid ItemsSource="{Binding History}"
+                              AutoGenerateColumns="False"
+                              IsReadOnly="True"
+                              CanUserAddRows="False"
+                              CanUserDeleteRows="False"
+                              HeadersVisibility="Column"
+                              GridLinesVisibility="Horizontal"
+                              Background="#030E17"
+                              RowBackground="#030E17"
+                              AlternatingRowBackground="#04131F"
+                              Foreground="White"
+                              BorderBrush="{StaticResource BorderBrush}"
+                              HorizontalGridLinesBrush="{StaticResource BorderBrush}"
+                              Margin="0,12,0,0"
+                              MaxHeight="270">
+                        <DataGrid.Columns>
+                            <DataGridTextColumn Header="Time" Binding="{Binding Time}" Width="90" />
+                            <DataGridTextColumn Header="Windows CPU" Binding="{Binding WindowsCpu}" Width="*" />
+                            <DataGridTextColumn Header="Working Set" Binding="{Binding WorkingSet}" Width="*" />
+                            <DataGridTextColumn Header="Disk Read" Binding="{Binding DiskRead}" Width="*" />
+                            <DataGridTextColumn Header="Disk Write" Binding="{Binding DiskWrite}" Width="*" />
+                            <DataGridTextColumn Header="Keryx CPU" Binding="{Binding KeryxCpu}" Width="*" />
+                            <DataGridTextColumn Header="Active Peers" Binding="{Binding ActivePeers}" Width="*" />
+                        </DataGrid.Columns>
+                    </DataGrid>
+                </StackPanel>
+            </Border>
+        </StackPanel>
+    </ScrollViewer>
+</UserControl>
