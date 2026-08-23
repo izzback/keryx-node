@@ -63,7 +63,6 @@ jobs:
         run: |
           rustfmt --edition 2024 --check \
             protocol/flows/src/ibd_v2/*.rs \
-            protocol/flows/src/ibd/flow.rs \
             protocol/flows/src/ibd/progress.rs \
             protocol/flows/src/ibd/streams.rs
 
@@ -134,31 +133,31 @@ jobs:
               text,
               'service-state chunk counters',
               '''                    Some(Payload::ServiceStateChunk(chunk)) => {
-                              for row in chunk.rows {''',
+                          for row in chunk.rows {''',
               '''                    Some(Payload::ServiceStateChunk(chunk)) => {
-                              if metrics_enabled() {
-                                  let chunk_rows = chunk.rows.len() as u64;
-                                  let chunk_bytes = chunk.rows.iter().map(|row| row.len() as u64).sum();
-                                  metrics.record_transfer(chunk_rows, chunk_bytes);
-                              }
-                              let validation_started = metrics_enabled().then(Instant::now);
-                              for row in chunk.rows {''',
+                          if metrics_enabled() {
+                              let chunk_rows = chunk.rows.len() as u64;
+                              let chunk_bytes = chunk.rows.iter().map(|row| row.len() as u64).sum();
+                              metrics.record_transfer(chunk_rows, chunk_bytes);
+                          }
+                          let validation_started = metrics_enabled().then(Instant::now);
+                          for row in chunk.rows {''',
           )
 
           text = replace_once(
               text,
               'service-state validation timer',
               '''                            rows.push(row);
-                              }
                           }
-                          Some(Payload::DoneServiceStateChunks(_)) => break,''',
+                      }
+                      Some(Payload::DoneServiceStateChunks(_)) => break,''',
               '''                            rows.push(row);
-                              }
-                              if let Some(validation_started) = validation_started {
-                                  metrics.record_validation_time(validation_started.elapsed());
-                              }
                           }
-                          Some(Payload::DoneServiceStateChunks(_)) => break,''',
+                          if let Some(validation_started) = validation_started {
+                              metrics.record_validation_time(validation_started.elapsed());
+                          }
+                      }
+                      Some(Payload::DoneServiceStateChunks(_)) => break,''',
           )
 
           text = replace_once(
@@ -205,17 +204,11 @@ jobs:
 
           path.write_text(text, encoding='utf-8')
 
-      - name: Install pinned rustfmt
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.93.0
-          components: rustfmt
-
-      - name: Format and commit patch
+      - name: Validate and commit patch
         shell: bash
         run: |
-          rustfmt --edition 2024 protocol/flows/src/ibd/flow.rs
           git diff --check
+          git diff -- protocol/flows/src/ibd/flow.rs
           git config user.name "github-actions[bot]"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
           git add protocol/flows/src/ibd/flow.rs
