@@ -1,0 +1,95 @@
+name: Keryx External Connectivity Test
+
+on:
+  push:
+    branches:
+      - ibd-connectivity-test
+    paths:
+      - .github/workflows/ibd-connectivity-test.yml
+  workflow_dispatch:
+
+jobs:
+  external-probe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: Resolve DNS and probe Keryx endpoints
+        shell: bash
+        run: |
+          python3 - <<'PY'
+          import socket
+          import ssl
+          import sys
+          import time
+
+          HOST = "izzback0keryx.freeboxos.fr"
+          PORTS = (22111, 443)
+
+          print(f"Target: {HOST}")
+          print("=" * 72)
+
+          try:
+              infos = socket.getaddrinfo(HOST, None, type=socket.SOCK_STREAM)
+          except Exception as exc:
+              print(f"DNS: FAIL - {exc}")
+              sys.exit(2)
+
+          addresses = []
+          for family, _, _, _, sockaddr in infos:
+              ip = sockaddr[0]
+              item = (family, ip)
+              if item not in addresses:
+                  addresses.append(item)
+
+          if not addresses:
+              print("DNS: FAIL - no address returned")
+              sys.exit(2)
+
+          print("DNS: OK")
+          for family, ip in addresses:
+              fam = "IPv6" if family == socket.AF_INET6 else "IPv4"
+              print(f"  {fam}: {ip}")
+
+          print("=" * 72)
+          results = {}
+
+          for port in PORTS:
+              started = time.monotonic()
+              try:
+                  with socket.create_connection((HOST, port), timeout=10) as sock:
+                      elapsed = (time.monotonic() - started) * 1000
+                      peer = sock.getpeername()
+                      print(f"TCP {port}: OPEN ({elapsed:.1f} ms) peer={peer}")
+                      results[port] = True
+              except Exception as exc:
+                  elapsed = (time.monotonic() - started) * 1000
+                  print(f"TCP {port}: CLOSED/UNREACHABLE ({elapsed:.1f} ms) - {exc}")
+                  results[port] = False
+
+          print("=" * 72)
+          if results.get(443):
+              try:
+                  context = ssl.create_default_context()
+                  with socket.create_connection((HOST, 443), timeout=10) as raw:
+                      with context.wrap_socket(raw, server_hostname=HOST) as tls:
+                          cert = tls.getpeercert()
+                          subject = dict(x[0] for x in cert.get("subject", []))
+                          issuer = dict(x[0] for x in cert.get("issuer", []))
+                          print(f"TLS 443: OK protocol={tls.version()}")
+                          print(f"  subject CN: {subject.get('commonName', '<none>')}")
+                          print(f"  issuer CN:  {issuer.get('commonName', '<none>')}")
+                          print(f"  expires:    {cert.get('notAfter', '<unknown>')}")
+              except Exception as exc:
+                  print(f"TLS 443: FAIL - {exc}")
+          else:
+              print("TLS 443: SKIPPED (TCP 443 unavailable)")
+
+          print("=" * 72)
+          print("SUMMARY")
+          print(f"  DNS      : {'OK' if addresses else 'FAIL'}")
+          print(f"  P2P 22111: {'OPEN' if results.get(22111) else 'NOT REACHABLE'}")
+          print(f"  HTTPS 443: {'OPEN' if results.get(443) else 'NOT REACHABLE'}")
+
+          # Keep the workflow successful when DNS works so the logs remain easy to inspect.
+          # Port status is reported explicitly above and is the result of this diagnostic.
+          PY
