@@ -41,20 +41,45 @@
                             <TextBlock Text="PROCESS CONTROL" Style="{StaticResource SectionTitleStyle}" />
                             <TextBlock Text="Detected keryxd.exe processes" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,6,0,10" />
                             <ComboBox ItemsSource="{Binding ProcessControl.DetectedNodes}" SelectedItem="{Binding ProcessControl.SelectedNode}" DisplayMemberPath="DisplayName" />
+
                             <Border Background="#03111D" BorderBrush="{StaticResource BorderBrush}" BorderThickness="1" CornerRadius="5" Padding="10" Margin="0,10,0,0">
                                 <StackPanel>
                                     <TextBlock Text="{Binding ProcessControl.AttachedNodeLabel}" FontWeight="SemiBold" Foreground="{StaticResource AccentBrush}" />
                                     <TextBlock Text="{Binding ProcessControl.AttachedExecutable}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,4,0,0" TextTrimming="CharacterEllipsis" />
                                     <TextBlock Text="{Binding ProcessControl.AttachedStarted, StringFormat=Started: {0}}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,3,0,0" />
+                                    <TextBlock Text="{Binding ProcessControl.RpcEndpoint, StringFormat=RPC: {0}}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,3,0,0" />
+                                    <TextBlock Text="{Binding ProcessControl.RpcStatus, StringFormat=Status: {0}}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,3,0,0" />
                                 </StackPanel>
                             </Border>
+
+                            <TextBlock Text="Attached node gRPC endpoint" Style="{StaticResource FieldLabelStyle}" />
+                            <Grid>
+                                <Grid.ColumnDefinitions>
+                                    <ColumnDefinition />
+                                    <ColumnDefinition Width="92" />
+                                    <ColumnDefinition Width="116" />
+                                </Grid.ColumnDefinitions>
+                                <TextBox Text="{Binding ProcessControl.RpcHostInput, UpdateSourceTrigger=PropertyChanged}" ToolTip="Pour la sécurité, seuls 127.0.0.1, localhost et ::1 sont acceptés." />
+                                <TextBox Grid.Column="1" Margin="8,0,0,0" Text="{Binding ProcessControl.RpcPortInput, UpdateSourceTrigger=PropertyChanged}" />
+                                <Button Grid.Column="2" Margin="8,0,0,0" Style="{StaticResource SecondaryButtonStyle}" Content="Apply &amp; Verify" Command="{Binding ProcessControl.ApplyRpcCommand}" />
+                            </Grid>
+                            <TextBlock Text="Un endpoint externe reste UNVERIFIED jusqu’à la réussite d’un vrai GetInfo Keryx." Foreground="{StaticResource MutedTextBrush}" FontSize="10" Margin="0,6,0,0" TextWrapping="Wrap" />
+
                             <Grid Margin="0,10,0,0">
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                                 <Button Style="{StaticResource SecondaryButtonStyle}" Content="Detect" Command="{Binding ProcessControl.DetectCommand}" />
                                 <Button Grid.Column="1" Margin="8,0,0,0" Style="{StaticResource PrimaryButtonStyle}" Content="Attach" Command="{Binding ProcessControl.AttachCommand}" />
                                 <Button Grid.Column="2" Margin="8,0,0,0" Style="{StaticResource SecondaryButtonStyle}" Content="Detach" Command="{Binding ProcessControl.DetachCommand}" />
                             </Grid>
-                            <TextBlock Text="{Binding ProcessControl.Status}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,8,0,0" />
+
+                            <Button Margin="0,8,0,0"
+                                    Style="{StaticResource SecondaryButtonStyle}"
+                                    Content="■  Shutdown via verified RPC"
+                                    IsEnabled="{Binding ProcessControl.CanRpcShutdown}"
+                                    Click="RpcShutdown_Click"
+                                    ToolTip="Envoie la commande Shutdown officielle Keryx uniquement à l’endpoint gRPC loopback vérifié du processus attaché. Aucun Kill automatique." />
+
+                            <TextBlock Text="{Binding ProcessControl.Status}" Foreground="{StaticResource MutedTextBrush}" FontSize="11" Margin="0,8,0,0" TextWrapping="Wrap" />
                             <TextBlock Text="{Binding ProcessControl.LastError}" Foreground="{StaticResource DangerBrush}" FontSize="11" Margin="0,3,0,0" TextWrapping="Wrap" />
                         </StackPanel>
                     </Border>
@@ -182,8 +207,8 @@
                     <ColumnDefinition Width="Auto"/>
                 </Grid.ColumnDefinitions>
                 <Button Style="{StaticResource PrimaryButtonStyle}" Content="▶  Start Node" Command="{Binding StartCommand}" MinWidth="150" />
-                <Button Grid.Column="1" Style="{StaticResource SecondaryButtonStyle}" Content="■  Stop Node" Command="{Binding StopCommand}" MinWidth="130" Margin="10,0,0,0" />
-                <Button Grid.Column="2" Style="{StaticResource SecondaryButtonStyle}" Content="↻  Restart" Command="{Binding RestartCommand}" MinWidth="120" Margin="10,0,0,0" />
+                <Button Grid.Column="1" Style="{StaticResource SecondaryButtonStyle}" Content="■  Stop Node" Command="{Binding StopCommand}" MinWidth="130" Margin="10,0,0,0" ToolTip="Arrêt propre : fenêtre Windows si disponible, puis Shutdown RPC vérifié. Aucun Kill automatique." />
+                <Button Grid.Column="2" Style="{StaticResource SecondaryButtonStyle}" Content="↻  Restart" Command="{Binding RestartCommand}" MinWidth="120" Margin="10,0,0,0" ToolTip="Redémarre uniquement si le node s’est arrêté proprement. Aucun Kill automatique." />
                 <Button Grid.Column="3" Style="{StaticResource DangerButtonStyle}" Content="✕  Kill Node" IsEnabled="{Binding ProcessControl.CanKill}" MinWidth="120" Margin="10,0,0,0" Click="KillNode_Click" ToolTip="Forcer la fermeture immédiate du processus keryxd attaché. À utiliser uniquement si l’arrêt normal ne fonctionne pas." />
                 <StackPanel Grid.Column="5" HorizontalAlignment="Right">
                     <TextBlock Text="{Binding ProcessStateLabel}" HorizontalAlignment="Right" FontWeight="SemiBold" Foreground="{StaticResource SuccessBrush}" />
