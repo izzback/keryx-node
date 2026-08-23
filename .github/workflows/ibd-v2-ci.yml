@@ -63,6 +63,7 @@ jobs:
         run: |
           rustfmt --edition 2024 --check \
             protocol/flows/src/ibd_v2/*.rs \
+            protocol/flows/src/ibd/flow.rs \
             protocol/flows/src/ibd/progress.rs \
             protocol/flows/src/ibd/streams.rs
 
@@ -74,34 +75,3 @@ jobs:
 
       - name: Test P2P flows crate
         run: cargo test -p keryx-p2p-flows
-
-  stage-format:
-    name: Normalize PoM metrics formatting
-    if: github.event_name == 'pull_request' && github.head_ref == 'ibd-v2' && github.event.pull_request.head.repo.full_name == github.repository
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-
-    steps:
-      - name: Checkout development branch
-        uses: actions/checkout@v4
-        with:
-          ref: ibd-v2
-
-      - name: Install pinned rustfmt
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.93.0
-          components: rustfmt
-
-      - name: Format flow and commit
-        shell: bash
-        run: |
-          rustfmt --edition 2024 protocol/flows/src/ibd/flow.rs
-          git diff --check
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git add protocol/flows/src/ibd/flow.rs
-          git diff --cached --quiet && exit 0
-          git commit -m "style(ibd-v2): format PoM instrumentation"
-          git push origin HEAD:ibd-v2
