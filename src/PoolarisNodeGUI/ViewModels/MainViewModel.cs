@@ -11,7 +11,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
     private readonly DashboardViewModel _dashboard;
     private readonly NodeLauncherViewModel _launcher;
     private readonly PeersViewModel _peers;
-    private readonly PerformanceViewModel _performance;
+    private readonly PerformancePageViewModel _performance;
     private readonly LogsViewModel _logs;
     private readonly SettingsViewModel _settings;
 
@@ -27,7 +27,7 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _dashboard = new DashboardViewModel(_runtimeSession);
         _launcher = new NodeLauncherViewModel(_runtimeSession);
         _peers = new PeersViewModel(_runtimeSession);
-        _performance = new PerformanceViewModel();
+        _performance = new PerformancePageViewModel(_runtimeSession);
         _logs = new LogsViewModel();
         _settings = new SettingsViewModel();
 
@@ -108,5 +108,6 @@ public sealed class MainViewModel : ViewModelBase, IDisposable
         _rpcMonitor.Dispose();
         _dashboard.Dispose();
         _peers.Dispose();
+        _performance.Dispose();
     }
 }
