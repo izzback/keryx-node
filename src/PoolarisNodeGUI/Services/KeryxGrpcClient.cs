@@ -111,6 +111,23 @@ public sealed class KeryxGrpcClient
             peer.IsIbdPeer)).ToArray();
     }
 
+    public async Task ShutdownAsync(string host, int port, CancellationToken cancellationToken = default)
+    {
+        if (!RpcEndpointPolicy.IsLoopbackHost(host))
+            throw new InvalidOperationException("Poolaris refuse d'envoyer Shutdown à un endpoint RPC non-loopback.");
+        if (!RpcEndpointPolicy.IsValidPort(port))
+            throw new ArgumentOutOfRangeException(nameof(port), "Le port RPC doit être compris entre 1 et 65535.");
+
+        var response = await SendAsync(host, port, new KaspadRequest
+        {
+            Id = NextId(),
+            ShutdownRequest = new ShutdownRequestMessage()
+        }, cancellationToken).ConfigureAwait(false);
+
+        var payload = response.ShutdownResponse ?? throw new InvalidOperationException("Keryx returned an unexpected response to Shutdown.");
+        ThrowIfRpcError(payload.Error);
+    }
+
     private async Task<KaspadResponse> SendAsync(string host, int port, KaspadRequest request, CancellationToken cancellationToken)
     {
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
