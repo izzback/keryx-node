@@ -1,12 +1,13 @@
 using PoolarisNodeGUI.Models;
 using PoolarisNodeGUI.Services;
+using PoolarisNodeGUI.ViewModels;
 
 namespace PoolarisNodeGUI.Tests;
 
 public sealed class RuntimeNodeSessionTests
 {
     [Fact]
-    public void ManagedNodeKeepsExactConfiguredGrpcPort()
+    public void ManagedNodeKeepsExactConfiguredGrpcPortButStartsUnverified()
     {
         var session = new RuntimeNodeSession();
         var node = new KeryxProcessInfo(4242, @"C:\Keryx\keryxd.exe", DateTime.Now, true);
@@ -15,8 +16,9 @@ public sealed class RuntimeNodeSessionTests
 
         Assert.Equal(24242, session.RpcPort);
         Assert.True(session.RpcEnabled);
-        Assert.True(session.RpcEndpointVerified);
+        Assert.False(session.RpcEndpointVerified);
         Assert.Contains("24242", session.RpcEndpointDisplay);
+        Assert.Contains("unverified", session.RpcEndpointDisplay);
     }
 
     [Fact]
@@ -31,6 +33,20 @@ public sealed class RuntimeNodeSessionTests
         Assert.False(session.RpcEndpointVerified);
         Assert.Equal("Disabled", session.RpcEndpointDisplay);
         Assert.Equal("Disabled", session.RpcStatus);
+    }
+
+    [Fact]
+    public void RpcShutdownIsUnavailableWithoutLiveRpcConnection()
+    {
+        var session = new RuntimeNodeSession();
+        var node = new KeryxProcessInfo(4242, @"C:\Keryx\keryxd.exe", DateTime.Now, true);
+        session.AttachManaged(node, rpcPort: 22110, rpcEnabled: true);
+        session.SetRpcEndpoint("127.0.0.1", 22110, verified: true);
+
+        var control = new ProcessControlViewModel(session);
+
+        Assert.False(session.RpcConnected);
+        Assert.False(control.CanRpcShutdown);
     }
 
     [Theory]
