@@ -42,11 +42,16 @@ public sealed class DashboardViewModel : ViewModelBase, IDisposable
         {
             var started = _session.AttachedNode?.StartTime;
             if (!started.HasValue) return "—";
+
             var uptime = DateTime.Now - started.Value;
             if (uptime < TimeSpan.Zero) return "—";
+
+            var hours = uptime.Hours;
+            var minutes = uptime.Minutes;
+            var seconds = uptime.Seconds;
             return uptime.TotalDays >= 1
-                ? $"{(int)uptime.TotalDays}d {uptime:hh\:mm\:ss}"
-                : uptime.ToString("hh\:mm\:ss");
+                ? $"{(int)uptime.TotalDays}d {hours:00}:{minutes:00}:{seconds:00}"
+                : $"{hours:00}:{minutes:00}:{seconds:00}";
         }
     }
 
