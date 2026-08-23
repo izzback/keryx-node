@@ -16,7 +16,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <Protobuf Include="Protos\rpc.proto" GrpcServices="None" />
-    <Protobuf Include="Protos\messages.proto" GrpcServices="Client" />
+    <Protobuf Include="Protos\rpc.proto" ProtoRoot="Protos" GrpcServices="None" />
+    <Protobuf Include="Protos\messages.proto" ProtoRoot="Protos" GrpcServices="Client" />
   </ItemGroup>
 </Project>
