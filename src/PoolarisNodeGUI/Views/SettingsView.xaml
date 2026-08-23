@@ -1,1 +1,169 @@
-<UserControl x:Class="PoolarisNodeGUI.Views.SettingsView" xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"><Border Style="{StaticResource CardStyle}"><StackPanel><TextBlock Text="SETTINGS" FontWeight="Bold"/><TextBlock Text="Poolaris configuration and advanced diagnostics." Foreground="{StaticResource MutedTextBrush}" Margin="0,16,0,0"/></StackPanel></Border></UserControl>
+<UserControl x:Class="PoolarisNodeGUI.Views.SettingsView"
+             xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+    <ScrollViewer VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
+        <Grid MaxWidth="1360">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="1.08*" />
+                <ColumnDefinition Width="12" />
+                <ColumnDefinition Width="0.92*" />
+            </Grid.ColumnDefinitions>
+
+            <StackPanel Grid.Column="0">
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="NODE PROFILE" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Text="Ces valeurs sont partagées avec Node Launcher et modifient la prochaine commande générée. Elles ne redémarrent jamais automatiquement un node déjà en cours."
+                                   Foreground="{StaticResource MutedTextBrush}"
+                                   FontSize="11"
+                                   Margin="0,6,0,14"
+                                   TextWrapping="Wrap" />
+
+                        <TextBlock Text="Keryx executable" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox Text="{Binding NodeExecutable, UpdateSourceTrigger=PropertyChanged}" />
+
+                        <TextBlock Text="Keryx Application Directory (AppDir)" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox Text="{Binding AppDirectory, UpdateSourceTrigger=PropertyChanged}"
+                                 ToolTip="Répertoire racine Keryx. Poolaris ajoute lui-même le dossier réseau puis datadir/logs." />
+
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Network: Mainnet / Testnet" VerticalAlignment="Center" />
+                            <ToggleButton Grid.Column="1"
+                                          Style="{StaticResource SwitchStyle}"
+                                          IsChecked="{Binding IsTestnet}" />
+                        </Grid>
+
+                        <Grid Margin="0,12,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="UTXO Index" VerticalAlignment="Center"
+                                       ToolTip="Active l'index UTXO Keryx. Cette option augmente l'utilisation du stockage et de la mémoire." />
+                            <ToggleButton Grid.Column="1"
+                                          Style="{StaticResource SwitchStyle}"
+                                          IsChecked="{Binding UtxoIndex}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="PERFORMANCE &amp; PEERS" Style="{StaticResource SectionTitleStyle}" />
+
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="Async threads" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Text="{Binding AsyncThreads, UpdateSourceTrigger=PropertyChanged}" />
+                        </Grid>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="RAM scale" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Text="{Binding RamScale, UpdateSourceTrigger=PropertyChanged}" />
+                        </Grid>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="RocksDB cache (MB)" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Text="{Binding RocksDbCacheSizeMb, UpdateSourceTrigger=PropertyChanged}" />
+                        </Grid>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="Outbound peers" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Text="{Binding OutboundPeers, UpdateSourceTrigger=PropertyChanged}" />
+                        </Grid>
+                        <Grid Margin="0,8,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="160"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="Max inbound peers" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Text="{Binding MaxInboundPeers, UpdateSourceTrigger=PropertyChanged}" />
+                        </Grid>
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+
+            <StackPanel Grid.Column="2">
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="RPC &amp; LOGGING" Style="{StaticResource SectionTitleStyle}" />
+
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions>
+                                <ColumnDefinition Width="*" />
+                                <ColumnDefinition Width="Auto" />
+                            </Grid.ColumnDefinitions>
+                            <TextBlock Text="Enable gRPC" VerticalAlignment="Center" />
+                            <ToggleButton Grid.Column="1"
+                                          Style="{StaticResource SwitchStyle}"
+                                          IsChecked="{Binding EnableGrpc}" />
+                        </Grid>
+
+                        <Grid Margin="0,10,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="140"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="gRPC port" Foreground="{StaticResource MutedTextBrush}" VerticalAlignment="Center" />
+                            <TextBox Grid.Column="1" Text="{Binding GrpcPort, UpdateSourceTrigger=PropertyChanged}" />
+                        </Grid>
+
+                        <TextBlock Text="Log level" Style="{StaticResource FieldLabelStyle}" />
+                        <ComboBox ItemsSource="{Binding LogLevels}"
+                                  SelectedItem="{Binding LogLevel}" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}" Margin="0,0,0,12">
+                    <StackPanel>
+                        <TextBlock Text="RESOLVED PATHS" Style="{StaticResource SectionTitleStyle}" />
+                        <TextBlock Text="Poolaris calcule ces chemins à partir de l'AppDir. Aucun chemin de base de données n'est inventé ou modifié ici."
+                                   Foreground="{StaticResource MutedTextBrush}"
+                                   FontSize="11"
+                                   Margin="0,6,0,12"
+                                   TextWrapping="Wrap" />
+
+                        <TextBlock Text="Database" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox Text="{Binding ResolvedDatabasePath, Mode=OneWay}"
+                                 IsReadOnly="True"
+                                 ToolTip="Chemin final utilisé par Keryx pour la base de données." />
+
+                        <TextBlock Text="Keryx logs" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox Text="{Binding ResolvedLogDirectory, Mode=OneWay}"
+                                 IsReadOnly="True" />
+
+                        <TextBlock Text="Poolaris UI diagnostics" Style="{StaticResource FieldLabelStyle}" />
+                        <TextBox Text="{Binding UiDiagnosticsLogPath, Mode=OneWay}"
+                                 IsReadOnly="True" />
+                    </StackPanel>
+                </Border>
+
+                <Border Style="{StaticResource CardStyle}">
+                    <StackPanel>
+                        <TextBlock Text="CURRENT RUNTIME" Style="{StaticResource SectionTitleStyle}" />
+
+                        <Grid Margin="0,14,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="105"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="Node" Foreground="{StaticResource MutedTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="{Binding AttachedNode, Mode=OneWay}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid Margin="0,7,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="105"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="RPC" Foreground="{StaticResource MutedTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="{Binding RpcEndpoint, Mode=OneWay}" TextWrapping="Wrap" />
+                        </Grid>
+                        <Grid Margin="0,7,0,0">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="105"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock Text="RPC status" Foreground="{StaticResource MutedTextBrush}" />
+                            <TextBlock Grid.Column="1" Text="{Binding RpcStatus, Mode=OneWay}" Foreground="{StaticResource AccentBrush}" />
+                        </Grid>
+
+                        <TextBlock Text="Fermer Poolaris ne doit jamais arrêter automatiquement keryxd."
+                                   Foreground="{StaticResource WarningBrush}"
+                                   FontSize="11"
+                                   Margin="0,14,0,0"
+                                   TextWrapping="Wrap" />
+                    </StackPanel>
+                </Border>
+            </StackPanel>
+        </Grid>
+    </ScrollViewer>
+</UserControl>
