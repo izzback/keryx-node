@@ -1,5 +1,6 @@
 use std::time::{Duration, Instant};
 
+use crate::ibd_v2::metrics::{StageMetrics, metrics_enabled};
 use chrono::{Local, LocalResult, TimeZone};
 use keryx_core::info;
 
@@ -16,6 +17,7 @@ pub struct ProgressReporter {
     last_log_time: Instant,
     current_batch: usize,
     processed: usize,
+    metrics: StageMetrics,
 }
 
 impl ProgressReporter {
@@ -32,10 +34,12 @@ impl ProgressReporter {
             last_log_time: Instant::now(),
             current_batch: 0,
             processed: 0,
+            metrics: StageMetrics::new(),
         }
     }
 
     pub fn report(&mut self, processed_delta: usize, current_daa_score: u64, current_timestamp: u64) {
+        self.metrics.record_transfer(processed_delta as u64, 0);
         self.current_batch += processed_delta;
         let now = Instant::now();
         if now - self.last_log_time < REPORT_TIME_GRANULARITY && self.current_batch < REPORT_BATCH_GRANULARITY && self.processed > 0 {
@@ -54,13 +58,32 @@ impl ProgressReporter {
                 LocalResult::Single(date) => date.format("%Y-%m-%d %H:%M:%S.%3f:%z").to_string(),
             };
             info!("IBD: Processed {} {} ({}%) last block timestamp: {}", self.processed, self.object_name, percent, date);
+            if metrics_enabled() {
+                info!(
+                    "IBD-V2-METRICS: stage={} items={} elapsed={:.3}s rate={:.2} items/s",
+                    self.object_name,
+                    self.metrics.items,
+                    self.metrics.elapsed_seconds(),
+                    self.metrics.items_per_second()
+                );
+            }
             self.last_reported_percent = percent;
         }
         self.last_log_time = now;
     }
 
     pub fn report_completion(mut self, processed_delta: usize) {
+        self.metrics.record_transfer(processed_delta as u64, 0);
         self.processed += self.current_batch + processed_delta;
         info!("IBD: Processed {} {} (100%)", self.processed, self.object_name);
+        if metrics_enabled() {
+            info!(
+                "IBD-V2-METRICS: stage={} complete=true items={} elapsed={:.3}s rate={:.2} items/s",
+                self.object_name,
+                self.metrics.items,
+                self.metrics.elapsed_seconds(),
+                self.metrics.items_per_second()
+            );
+        }
     }
 }
