@@ -105,10 +105,8 @@ impl PomChunkMetrics {
         self.proofs = self.proofs.saturating_add(other.proofs);
         self.proof_bytes = self.proof_bytes.saturating_add(other.proof_bytes);
         self.reproofs_queued = self.reproofs_queued.saturating_add(other.reproofs_queued);
-        self.discarded_historical_proofs =
-            self.discarded_historical_proofs.saturating_add(other.discarded_historical_proofs);
-        self.discarded_historical_bytes =
-            self.discarded_historical_bytes.saturating_add(other.discarded_historical_bytes);
+        self.discarded_historical_proofs = self.discarded_historical_proofs.saturating_add(other.discarded_historical_proofs);
+        self.discarded_historical_bytes = self.discarded_historical_bytes.saturating_add(other.discarded_historical_bytes);
         self.decode_time = self.decode_time.saturating_add(other.decode_time);
         self.peer_wait_time = self.peer_wait_time.saturating_add(other.peer_wait_time);
     }
@@ -783,8 +781,7 @@ impl IbdFlow {
         let mut metrics = StageMetrics::new();
         loop {
             let wait_started = metrics_enabled().then(Instant::now);
-            let received =
-                tokio::time::timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT, self.incoming_route.recv()).await;
+            let received = tokio::time::timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT, self.incoming_route.recv()).await;
             if let Some(wait_started) = wait_started {
                 metrics.record_peer_wait_time(wait_started.elapsed());
             }
@@ -798,8 +795,7 @@ impl IbdFlow {
                         }
                         let validation_started = metrics_enabled().then(Instant::now);
                         for row in chunk.rows {
-                            let daa = service_row_daa(&row)
-                                .ok_or(ProtocolError::Other("malformed service-state row"))?;
+                            let daa = service_row_daa(&row).ok_or(ProtocolError::Other("malformed service-state row"))?;
                             if daa > handoff_cutoff {
                                 return Err(ProtocolError::Other("service-state row beyond the handoff ceiling"));
                             }
@@ -847,7 +843,12 @@ impl IbdFlow {
         if let Some(storage_started) = storage_started {
             metrics.record_storage_time(storage_started.elapsed());
         }
-        info!("imported {} sealed service-state rows ({} verified, {} handoff)", prefix_rows + handoff_rows, prefix_rows, handoff_rows);
+        info!(
+            "imported {} sealed service-state rows ({} verified, {} handoff)",
+            prefix_rows + handoff_rows,
+            prefix_rows,
+            handoff_rows
+        );
         if metrics_enabled() {
             info!(
                 "IBD-V2-METRICS: stage=service-state complete=true rows={} verified={} handoff={} bytes={} elapsed={:.3}s rate={:.2} rows/s throughput={:.2} MB/s peer_wait={:.3}s peer_wait_pct={:.1}% validation={:.3}s storage={:.3}s",
@@ -1094,24 +1095,14 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
         let mut validation_blocked = Duration::ZERO;
 
         let mut iter = hashes.chunks(IBD_BATCH_SIZE);
-        let QueueChunkOutput {
-            jobs: mut prev_jobs,
-            daa_score: mut prev_daa_score,
-            timestamp: mut prev_timestamp,
-            pom: first_pom,
-        } =
+        let QueueChunkOutput { jobs: mut prev_jobs, daa_score: mut prev_daa_score, timestamp: mut prev_timestamp, pom: first_pom } =
             self.queue_block_processing_chunk(consensus, iter.next().expect("hashes was non empty"), high_daa).await?;
-            pom_totals.merge(first_pom);
+        pom_totals.merge(first_pom);
 
         for chunk in iter {
-            let QueueChunkOutput {
-                jobs: current_jobs,
-                daa_score: current_daa_score,
-                timestamp: current_timestamp,
-                pom: current_pom,
-            } =
+            let QueueChunkOutput { jobs: current_jobs, daa_score: current_daa_score, timestamp: current_timestamp, pom: current_pom } =
                 self.queue_block_processing_chunk(consensus, chunk, high_daa).await?;
-                pom_totals.merge(current_pom);
+            pom_totals.merge(current_pom);
             let prev_chunk_len = prev_jobs.len();
             // Join the previous chunk so that we always concurrently process a chunk and receive another
             let validation_wait_started = metrics_enabled().then(Instant::now);
@@ -1254,11 +1245,8 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             if let Some(wait_started) = wait_started {
                 pom.peer_wait_time = pom.peer_wait_time.saturating_add(wait_started.elapsed());
             }
-            let proof_bytes = if metrics_enabled() {
-                msg.pom_proof.as_deref().map(|proof| proof.len() as u64).unwrap_or(0)
-            } else {
-                0
-            };
+            let proof_bytes =
+                if metrics_enabled() { msg.pom_proof.as_deref().map(|proof| proof.len() as u64).unwrap_or(0) } else { 0 };
             if proof_bytes > 0 {
                 pom.proofs = pom.proofs.saturating_add(1);
                 pom.proof_bytes = pom.proof_bytes.saturating_add(proof_bytes);
@@ -1276,9 +1264,9 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                 .transpose()
                 .map_err(|_| ProtocolError::OtherOwned(format!("invalid pom_proof for block {}", expected_hash)))?
                 .map(Arc::new);
-                if let Some(decode_started) = decode_started {
-                    pom.decode_time = pom.decode_time.saturating_add(decode_started.elapsed());
-                }
+            if let Some(decode_started) = decode_started {
+                pom.decode_time = pom.decode_time.saturating_add(decode_started.elapsed());
+            }
             // TODO (relaxed): make header queries in a batch.
             let blk_header = consensus.async_get_header(expected_hash).await.map_err(|err| {
                 // Conceptually this indicates local inconsistency, since we received the expected hashes via a local
