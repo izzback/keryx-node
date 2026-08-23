@@ -12,6 +12,9 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
     private string _rpcHost = "127.0.0.1";
     private int _rpcPort = 22110;
     private bool _rpcEndpointVerified;
+    private KeryxRpcSnapshot? _rpcSnapshot;
+    private DateTime? _rpcLastUpdated;
+    private bool _rpcRefreshing;
 
     public ObservableCollection<KeryxProcessInfo> DetectedNodes { get; } = new();
 
@@ -79,12 +82,60 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
         }
     }
 
+    public KeryxRpcSnapshot? RpcSnapshot
+    {
+        get => _rpcSnapshot;
+        private set
+        {
+            if (ReferenceEquals(_rpcSnapshot, value)) return;
+            _rpcSnapshot = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RpcConnected));
+            OnPropertyChanged(nameof(RpcStatus));
+            OnPropertyChanged(nameof(RpcError));
+        }
+    }
+
+    public DateTime? RpcLastUpdated
+    {
+        get => _rpcLastUpdated;
+        private set
+        {
+            if (_rpcLastUpdated == value) return;
+            _rpcLastUpdated = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RpcLastUpdatedDisplay));
+        }
+    }
+
+    public bool RpcRefreshing
+    {
+        get => _rpcRefreshing;
+        internal set
+        {
+            if (_rpcRefreshing == value) return;
+            _rpcRefreshing = value;
+            OnPropertyChanged();
+            OnPropertyChanged(nameof(RpcStatus));
+        }
+    }
+
     public bool IsAttached => AttachedNode is not null;
     public bool CanAttach => SelectedNode is not null && !Equals(SelectedNode, AttachedNode);
     public bool CanDetach => AttachedNode is not null;
     public string AttachedNodeLabel => AttachedNode?.DisplayName ?? "No node attached";
     public string AttachedPid => AttachedNode?.ProcessId.ToString() ?? "—";
     public string RpcEndpointDisplay => $"{RpcHost}:{RpcPort} ({(RpcEndpointVerified ? "verified" : "default")})";
+    public bool RpcConnected => IsAttached && RpcSnapshot is { Error: null, Info: not null };
+    public string RpcError => RpcSnapshot?.Error ?? string.Empty;
+    public string RpcStatus => !IsAttached
+        ? "Unavailable"
+        : RpcRefreshing && RpcSnapshot is null
+            ? "Connecting..."
+            : RpcConnected
+                ? "Connected"
+                : string.IsNullOrWhiteSpace(RpcError) ? "Unavailable" : "Error";
+    public string RpcLastUpdatedDisplay => RpcLastUpdated?.ToLocalTime().ToString("HH:mm:ss") ?? "—";
 
     public void Detect()
     {
@@ -100,7 +151,7 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
             : DetectedNodes.FirstOrDefault();
 
         if (AttachedNode is not null && !KeryxProcessDetector.StillMatches(AttachedNode))
-            AttachedNode = null;
+            Detach();
 
         OnPropertyChanged(nameof(DetectedCount));
     }
@@ -112,6 +163,7 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
 
         AttachedNode = SelectedNode;
         SetRpcEndpoint("127.0.0.1", 22110, verified: false);
+        ClearRpcSnapshot();
         return true;
     }
 
@@ -120,6 +172,7 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
         AttachedNode = node with { IsManaged = true };
         SelectedNode = AttachedNode;
         SetRpcEndpoint("127.0.0.1", rpcPort, verified: true);
+        ClearRpcSnapshot();
         if (DetectedNodes.All(x => x.ProcessId != node.ProcessId))
             DetectedNodes.Add(AttachedNode);
         OnPropertyChanged(nameof(DetectedCount));
@@ -130,12 +183,27 @@ public sealed class RuntimeNodeSession : INotifyPropertyChanged
         RpcHost = string.IsNullOrWhiteSpace(host) ? "127.0.0.1" : host.Trim();
         RpcPort = port is >= 1 and <= 65535 ? port : 22110;
         RpcEndpointVerified = verified;
+        ClearRpcSnapshot();
+    }
+
+    internal void SetRpcSnapshot(KeryxRpcSnapshot snapshot)
+    {
+        RpcSnapshot = snapshot;
+        RpcLastUpdated = DateTime.UtcNow;
+    }
+
+    internal void ClearRpcSnapshot()
+    {
+        RpcSnapshot = null;
+        RpcLastUpdated = null;
+        RpcRefreshing = false;
     }
 
     public void Detach()
     {
         AttachedNode = null;
         RpcEndpointVerified = false;
+        ClearRpcSnapshot();
     }
 
     public int DetectedCount => DetectedNodes.Count;
