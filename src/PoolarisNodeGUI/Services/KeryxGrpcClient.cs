@@ -10,17 +10,44 @@ public sealed class KeryxGrpcClient
 
     public async Task<KeryxRpcSnapshot> GetSnapshotAsync(string host, int port, CancellationToken cancellationToken = default)
     {
+        KeryxNodeInfo? info = null;
+        KeryxDagInfo? dag = null;
+        IReadOnlyList<KeryxPeerInfo> peers = Array.Empty<KeryxPeerInfo>();
+        var errors = new List<string>(3);
+
         try
         {
-            var info = await GetInfoAsync(host, port, cancellationToken).ConfigureAwait(false);
-            var dag = await GetBlockDagInfoAsync(host, port, cancellationToken).ConfigureAwait(false);
-            var peers = await GetConnectedPeerInfoAsync(host, port, cancellationToken).ConfigureAwait(false);
-            return new KeryxRpcSnapshot(info, dag, peers);
+            info = await GetInfoAsync(host, port, cancellationToken).ConfigureAwait(false);
         }
-        catch (Exception ex)
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
         {
-            return new KeryxRpcSnapshot(null, null, Array.Empty<KeryxPeerInfo>(), ex.Message);
+            errors.Add($"GetInfo: {ex.Message}");
         }
+
+        try
+        {
+            dag = await GetBlockDagInfoAsync(host, port, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            errors.Add($"GetBlockDagInfo: {ex.Message}");
+        }
+
+        try
+        {
+            peers = await GetConnectedPeerInfoAsync(host, port, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            errors.Add($"GetConnectedPeerInfo: {ex.Message}");
+        }
+
+        cancellationToken.ThrowIfCancellationRequested();
+        return new KeryxRpcSnapshot(
+            info,
+            dag,
+            peers,
+            errors.Count == 0 ? null : string.Join(" | ", errors));
     }
 
     public async Task<KeryxNodeInfo> GetInfoAsync(string host, int port, CancellationToken cancellationToken = default)
@@ -33,7 +60,11 @@ public sealed class KeryxGrpcClient
 
         var payload = response.GetInfoResponse ?? throw new InvalidOperationException("Keryx returned an unexpected response to GetInfo.");
         ThrowIfRpcError(payload.Error);
-        return new KeryxNodeInfo(payload.ServerVersion, payload.IsSynced, payload.IsUtxoIndexed);
+        return new KeryxNodeInfo(
+            payload.ServerVersion,
+            payload.IsSynced,
+            payload.IsUtxoIndexed,
+            payload.MempoolSize);
     }
 
     public async Task<KeryxDagInfo> GetBlockDagInfoAsync(string host, int port, CancellationToken cancellationToken = default)
@@ -51,6 +82,7 @@ public sealed class KeryxGrpcClient
             payload.BlockCount,
             payload.HeaderCount,
             payload.VirtualDaaScore,
+            payload.Difficulty,
             payload.TipHashes.ToArray(),
             payload.Sink,
             payload.PruningPointHash,
