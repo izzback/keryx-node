@@ -41,6 +41,27 @@ public partial class NodeLauncherView : UserControl
         vm.AppDirectory = KeryxPathResolver.SuggestAppDirectory(selected) ?? selected;
     }
 
+    private async void RpcShutdown_Click(object sender, RoutedEventArgs e)
+    {
+        if (DataContext is not NodeLauncherViewModel vm
+            || !vm.ProcessControl.CanRpcShutdown
+            || vm.ProcessControl.AttachedNode is not { } attached)
+        {
+            return;
+        }
+
+        var dialog = new RpcShutdownConfirmationWindow(
+            attached.ProcessId,
+            attached.ExecutablePath,
+            vm.ProcessControl.RpcEndpoint)
+        {
+            Owner = Window.GetWindow(this)
+        };
+
+        if (dialog.ShowDialog() == true)
+            await vm.ShutdownAttachedNodeAsync();
+    }
+
     private async void KillNode_Click(object sender, RoutedEventArgs e)
     {
         if (DataContext is not NodeLauncherViewModel vm || vm.ProcessControl.AttachedNode is not { } attached)
