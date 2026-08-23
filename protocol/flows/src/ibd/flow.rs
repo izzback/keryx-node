@@ -2,6 +2,7 @@ use crate::{
     flow_context::FlowContext,
     flow_trait::Flow,
     ibd::{HeadersChunkStream, TrustedEntryStream, negotiate::ChainNegotiationOutput},
+    ibd_v2::metrics::{StageMetrics, metrics_enabled},
 };
 use futures::future::{Either, join_all, select, try_join_all};
 use itertools::Itertools;
@@ -751,10 +752,23 @@ impl IbdFlow {
         let mut rows: Vec<Vec<u8>> = Vec::new();
         let mut prefix_rows = 0usize;
         let mut acc = MuHash::new();
+        let mut metrics = StageMetrics::new();
         loop {
-            match tokio::time::timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT, self.incoming_route.recv()).await {
+            let wait_started = metrics_enabled().then(Instant::now);
+            let received =
+                tokio::time::timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT, self.incoming_route.recv()).await;
+            if let Some(wait_started) = wait_started {
+                metrics.record_peer_wait_time(wait_started.elapsed());
+            }
+            match received {
                 Ok(Some(msg)) => match msg.payload {
                     Some(Payload::ServiceStateChunk(chunk)) => {
+                        if metrics_enabled() {
+                            let chunk_rows = chunk.rows.len() as u64;
+                            let chunk_bytes = chunk.rows.iter().map(|row| row.len() as u64).sum();
+                            metrics.record_transfer(chunk_rows, chunk_bytes);
+                        }
+                        let validation_started = metrics_enabled().then(Instant::now);
                         for row in chunk.rows {
                             let daa = service_row_daa(&row)
                                 .ok_or(ProtocolError::Other("malformed service-state row"))?;
@@ -769,6 +783,9 @@ impl IbdFlow {
                                 prefix_rows += 1;
                             }
                             rows.push(row);
+                        }
+                        if let Some(validation_started) = validation_started {
+                            metrics.record_validation_time(validation_started.elapsed());
                         }
                     }
                     Some(Payload::DoneServiceStateChunks(_)) => break,
@@ -785,7 +802,11 @@ impl IbdFlow {
         }
         // Mirror `commitment_at` exactly: no rows seals nothing, and the expected value is then
         // the zero hash.
+        let finalize_started = metrics_enabled().then(Instant::now);
         let computed = if prefix_rows == 0 { Hash::default() } else { acc.finalize() };
+        if let Some(finalize_started) = finalize_started {
+            metrics.record_validation_time(finalize_started.elapsed());
+        }
         if computed != expected {
             return Err(ProtocolError::OtherOwned(format!(
                 "service-state verification failed: peer rows hash to {}, header commits {}",
@@ -793,8 +814,28 @@ impl IbdFlow {
             )));
         }
         let handoff_rows = rows.len() - prefix_rows;
+        let storage_started = metrics_enabled().then(Instant::now);
         consensus.clone().spawn_blocking(move |c| c.import_service_state(rows)).await?;
+        if let Some(storage_started) = storage_started {
+            metrics.record_storage_time(storage_started.elapsed());
+        }
         info!("imported {} sealed service-state rows ({} verified, {} handoff)", prefix_rows + handoff_rows, prefix_rows, handoff_rows);
+        if metrics_enabled() {
+            info!(
+                "IBD-V2-METRICS: stage=service-state complete=true rows={} verified={} handoff={} bytes={} elapsed={:.3}s rate={:.2} rows/s throughput={:.2} MB/s peer_wait={:.3}s peer_wait_pct={:.1}% validation={:.3}s storage={:.3}s",
+                metrics.items,
+                prefix_rows,
+                handoff_rows,
+                metrics.bytes,
+                metrics.elapsed_seconds(),
+                metrics.items_per_second(),
+                metrics.megabytes_per_second(),
+                metrics.peer_wait_time.as_secs_f64(),
+                metrics.peer_wait_ratio() * 100.0,
+                metrics.validation_time.as_secs_f64(),
+                metrics.storage_time.as_secs_f64()
+            );
+        }
         Ok(())
     }
 
