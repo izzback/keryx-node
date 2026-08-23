@@ -1,3 +1,5 @@
+using System.IO;
+
 namespace PoolarisNodeGUI.Services;
 
 public static class KeryxPathResolver
