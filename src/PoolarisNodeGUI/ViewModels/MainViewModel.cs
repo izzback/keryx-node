@@ -4,9 +4,10 @@ using PoolarisNodeGUI.Services;
 
 namespace PoolarisNodeGUI.ViewModels;
 
-public sealed class MainViewModel : ViewModelBase
+public sealed class MainViewModel : ViewModelBase, IDisposable
 {
     private readonly RuntimeNodeSession _runtimeSession;
+    private readonly RuntimeRpcMonitor _rpcMonitor;
     private readonly DashboardViewModel _dashboard;
     private readonly NodeLauncherViewModel _launcher;
     private readonly PeersViewModel _peers;
@@ -17,13 +18,15 @@ public sealed class MainViewModel : ViewModelBase
     private ViewModelBase _currentPage;
     private string _currentPageTitle = "Dashboard";
     private string _nodeStatus = "NODE STOPPED";
+    private bool _disposed;
 
     public MainViewModel()
     {
         _runtimeSession = new RuntimeNodeSession();
+        _rpcMonitor = new RuntimeRpcMonitor(_runtimeSession);
         _dashboard = new DashboardViewModel(_runtimeSession);
         _launcher = new NodeLauncherViewModel(_runtimeSession);
-        _peers = new PeersViewModel();
+        _peers = new PeersViewModel(_runtimeSession);
         _performance = new PerformanceViewModel();
         _logs = new LogsViewModel();
         _settings = new SettingsViewModel();
@@ -77,14 +80,30 @@ public sealed class MainViewModel : ViewModelBase
 
     private void RuntimeSessionOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
-        if (e.PropertyName is nameof(RuntimeNodeSession.AttachedNode) or nameof(RuntimeNodeSession.IsAttached))
+        if (e.PropertyName is nameof(RuntimeNodeSession.AttachedNode)
+            or nameof(RuntimeNodeSession.IsAttached)
+            or nameof(RuntimeNodeSession.RpcConnected)
+            or nameof(RuntimeNodeSession.RpcStatus))
+        {
             RefreshNodeStatus();
+        }
     }
 
     private void RefreshNodeStatus()
     {
         NodeStatus = _runtimeSession.IsAttached
-            ? "NODE RUNNING"
+            ? _runtimeSession.RpcConnected ? "NODE RUNNING" : "NODE ATTACHED"
             : _launcher.ProcessStateLabel;
+    }
+
+    public void Dispose()
+    {
+        if (_disposed) return;
+        _disposed = true;
+        _launcher.PropertyChanged -= LauncherOnPropertyChanged;
+        _runtimeSession.PropertyChanged -= RuntimeSessionOnPropertyChanged;
+        _rpcMonitor.Dispose();
+        _dashboard.Dispose();
+        _peers.Dispose();
     }
 }
