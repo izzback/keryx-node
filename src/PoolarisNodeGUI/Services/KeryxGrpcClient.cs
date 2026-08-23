@@ -13,7 +13,8 @@ public sealed class KeryxGrpcClient
         KeryxNodeInfo? info = null;
         KeryxDagInfo? dag = null;
         IReadOnlyList<KeryxPeerInfo> peers = Array.Empty<KeryxPeerInfo>();
-        var errors = new List<string>(3);
+        KeryxMetricsSnapshot? metrics = null;
+        var errors = new List<string>(4);
 
         try
         {
@@ -42,12 +43,22 @@ public sealed class KeryxGrpcClient
             errors.Add($"GetConnectedPeerInfo: {ex.Message}");
         }
 
+        try
+        {
+            metrics = await GetMetricsAsync(host, port, cancellationToken).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException || !cancellationToken.IsCancellationRequested)
+        {
+            errors.Add($"GetMetrics: {ex.Message}");
+        }
+
         cancellationToken.ThrowIfCancellationRequested();
         return new KeryxRpcSnapshot(
             info,
             dag,
             peers,
-            errors.Count == 0 ? null : string.Join(" | ", errors));
+            errors.Count == 0 ? null : string.Join(" | ", errors),
+            metrics);
     }
 
     public async Task<KeryxNodeInfo> GetInfoAsync(string host, int port, CancellationToken cancellationToken = default)
@@ -109,6 +120,101 @@ public sealed class KeryxGrpcClient
             peer.AdvertisedProtocolVersion,
             peer.TimeConnected,
             peer.IsIbdPeer)).ToArray();
+    }
+
+    public async Task<KeryxMetricsSnapshot> GetMetricsAsync(string host, int port, CancellationToken cancellationToken = default)
+    {
+        var response = await SendAsync(host, port, new KaspadRequest
+        {
+            Id = NextId(),
+            GetMetricsRequest = new GetMetricsRequestMessage
+            {
+                ProcessMetrics = true,
+                ConnectionMetrics = true,
+                BandwidthMetrics = true,
+                ConsensusMetrics = true,
+                StorageMetrics = true,
+                CustomMetrics = false
+            }
+        }, cancellationToken).ConfigureAwait(false);
+
+        var payload = response.GetMetricsResponse ?? throw new InvalidOperationException("Keryx returned an unexpected response to GetMetrics.");
+        ThrowIfRpcError(payload.Error);
+
+        KeryxProcessMetrics? process = null;
+        if (payload.ProcessMetrics is { } processMetrics)
+        {
+            process = new KeryxProcessMetrics(
+                processMetrics.ResidentSetSize,
+                processMetrics.VirtualMemorySize,
+                processMetrics.CoreNum,
+                processMetrics.CpuUsage,
+                processMetrics.FdNum,
+                processMetrics.DiskIoReadBytes,
+                processMetrics.DiskIoWriteBytes,
+                processMetrics.DiskIoReadPerSec,
+                processMetrics.DiskIoWritePerSec);
+        }
+
+        KeryxConnectionMetrics? connections = null;
+        if (payload.ConnectionMetrics is { } connectionMetrics)
+        {
+            connections = new KeryxConnectionMetrics(
+                connectionMetrics.BorshLiveConnections,
+                connectionMetrics.BorshConnectionAttempts,
+                connectionMetrics.BorshHandshakeFailures,
+                connectionMetrics.JsonLiveConnections,
+                connectionMetrics.JsonConnectionAttempts,
+                connectionMetrics.JsonHandshakeFailures,
+                connectionMetrics.ActivePeers);
+        }
+
+        KeryxBandwidthMetrics? bandwidth = null;
+        if (payload.BandwidthMetrics is { } bandwidthMetrics)
+        {
+            bandwidth = new KeryxBandwidthMetrics(
+                bandwidthMetrics.BorshBytesTx,
+                bandwidthMetrics.BorshBytesRx,
+                bandwidthMetrics.JsonBytesTx,
+                bandwidthMetrics.JsonBytesRx,
+                bandwidthMetrics.GrpcP2PBytesTx,
+                bandwidthMetrics.GrpcP2PBytesRx,
+                bandwidthMetrics.GrpcUserBytesTx,
+                bandwidthMetrics.GrpcUserBytesRx);
+        }
+
+        KeryxConsensusMetrics? consensus = null;
+        if (payload.ConsensusMetrics is { } consensusMetrics)
+        {
+            consensus = new KeryxConsensusMetrics(
+                consensusMetrics.BlocksSubmitted,
+                consensusMetrics.HeaderCounts,
+                consensusMetrics.DepCounts,
+                consensusMetrics.BodyCounts,
+                consensusMetrics.TxsCounts,
+                consensusMetrics.ChainBlockCounts,
+                consensusMetrics.MassCounts,
+                consensusMetrics.BlockCount,
+                consensusMetrics.HeaderCount,
+                consensusMetrics.MempoolSize,
+                consensusMetrics.TipHashesCount,
+                consensusMetrics.Difficulty,
+                consensusMetrics.PastMedianTime,
+                consensusMetrics.VirtualParentHashesCount,
+                consensusMetrics.VirtualDaaScore);
+        }
+
+        KeryxStorageMetrics? storage = payload.StorageMetrics is { } storageMetrics
+            ? new KeryxStorageMetrics(storageMetrics.StorageSizeBytes)
+            : null;
+
+        return new KeryxMetricsSnapshot(
+            payload.ServerTime,
+            process,
+            connections,
+            bandwidth,
+            consensus,
+            storage);
     }
 
     public async Task ShutdownAsync(string host, int port, CancellationToken cancellationToken = default)
