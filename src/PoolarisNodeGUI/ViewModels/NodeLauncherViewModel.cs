@@ -121,6 +121,40 @@ public sealed class NodeLauncherViewModel : ViewModelBase
     public ICommand StopCommand { get; }
     public ICommand RestartCommand { get; }
 
+    public async Task<bool> ShutdownAttachedNodeAsync(CancellationToken cancellationToken = default)
+    {
+        var identity = ProcessControl.AttachedNode;
+        if (identity is null) return false;
+
+        StatusMessage = $"Requesting clean RPC shutdown for PID {identity.ProcessId}...";
+        LastError = string.Empty;
+
+        var requested = await ProcessControl.ShutdownAttachedAsync(cancellationToken);
+        if (!requested)
+        {
+            LastError = ProcessControl.LastError;
+            StatusMessage = ProcessControl.Status;
+            return false;
+        }
+
+        if (!KeryxProcessDetector.StillMatches(identity))
+        {
+            if (identity.IsManaged && ProcessId == identity.ProcessId)
+            {
+                ProcessId = null;
+                ProcessState = NodeProcessState.Stopped;
+            }
+
+            StatusMessage = "Keryx stopped cleanly via RPC.";
+        }
+        else
+        {
+            StatusMessage = "Keryx accepted the shutdown request and is still finishing.";
+        }
+
+        return true;
+    }
+
     public async Task<bool> KillAttachedNodeAsync()
     {
         var attached = ProcessControl.AttachedNode;
@@ -183,27 +217,36 @@ public sealed class NodeLauncherViewModel : ViewModelBase
 
     private async Task StopAsync()
     {
+        LastError = string.Empty;
         StatusMessage = "Requesting graceful stop...";
-        var stopped = await _processService.TryRequestCloseAsync(TimeSpan.FromSeconds(3));
+
+        var stopped = await TryStopManagedNodeAsync();
         if (stopped)
         {
             ProcessId = null;
             ProcessState = NodeProcessState.Stopped;
             ProcessControl.DetachCommand.Execute(null);
             ProcessControl.DetectCommand.Execute(null);
-            StatusMessage = "Keryx stopped.";
+            StatusMessage = "Keryx stopped cleanly.";
             return;
         }
 
-        StatusMessage = "Graceful stop is unavailable. RPC shutdown will be added in the next phase.";
+        LastError = ProcessControl.LastError;
+        StatusMessage = ProcessControl.CanRpcShutdown
+            ? "Keryx did not finish stopping. No force kill was attempted."
+            : "Graceful stop unavailable and RPC shutdown is not verified. No force kill was attempted.";
     }
 
     private async Task RestartAsync()
     {
-        var stopped = await _processService.TryRequestCloseAsync(TimeSpan.FromSeconds(3));
+        LastError = string.Empty;
+        StatusMessage = "Stopping Keryx before restart...";
+
+        var stopped = await TryStopManagedNodeAsync();
         if (!stopped)
         {
-            StatusMessage = "Restart cancelled: graceful stop is unavailable.";
+            LastError = ProcessControl.LastError;
+            StatusMessage = "Restart cancelled: Keryx did not stop cleanly. No force kill was attempted.";
             return;
         }
 
@@ -213,10 +256,33 @@ public sealed class NodeLauncherViewModel : ViewModelBase
         await StartAsync();
     }
 
+    private async Task<bool> TryStopManagedNodeAsync()
+    {
+        if (await _processService.TryRequestCloseAsync(TimeSpan.FromSeconds(3)))
+            return true;
+
+        if (!ProcessControl.CanRpcShutdown)
+            return false;
+
+        var requested = await ProcessControl.ShutdownAttachedAsync();
+        if (!requested)
+            return false;
+
+        for (var i = 0; i < 40; i++)
+        {
+            if (_processService.CurrentProcess is null)
+                return true;
+            await Task.Delay(250);
+        }
+
+        return _processService.CurrentProcess is null;
+    }
+
     private void ProcessControlOnPropertyChanged(object? sender, PropertyChangedEventArgs e)
     {
         if (e.PropertyName is nameof(ProcessControlViewModel.AttachedNode)
             or nameof(ProcessControlViewModel.CanKill)
+            or nameof(ProcessControlViewModel.CanRpcShutdown)
             or nameof(ProcessControlViewModel.AttachedNodeLabel))
         {
             OnPropertyChanged(nameof(ProcessControl));
