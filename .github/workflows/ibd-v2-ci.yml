@@ -86,3 +86,63 @@ jobs:
 
       - name: Test P2P flows crate
         run: cargo test -p keryx-p2p-flows
+
+  stage-service-state-wire:
+    name: Stage resumable service-state wire
+    if: github.event_name == 'push' && github.ref == 'refs/heads/ibd-v2' && !contains(github.event.head_commit.message, 'feat(ibd-v2): add resumable service-state wire metadata')
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout ibd-v2
+        uses: actions/checkout@v4
+        with:
+          ref: ibd-v2
+          fetch-depth: 0
+
+      - name: Install protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Install pinned Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: 1.93.0
+          components: rustfmt, clippy
+
+      - name: Apply resumable wire patch
+        run: python .github/scripts/stage-ibd-v2-service-state-wire.py
+
+      - name: Format modified Rust files
+        run: |
+          rustfmt --edition 2024 \
+            protocol/flows/src/ibd_v2/state.rs \
+            protocol/flows/src/ibd/flow.rs \
+            protocol/flows/src/v7/request_service_state.rs
+          git diff --check
+
+      - name: Check staged P2P wire crate
+        run: cargo check -p keryx-p2p-lib --all-targets
+
+      - name: Check staged P2P flows crate
+        run: cargo check -p keryx-p2p-flows --all-targets
+
+      - name: Clippy staged P2P flows crate
+        run: cargo clippy -p keryx-p2p-flows --all-targets --no-deps -- -D warnings -A clippy::collapsible_if
+
+      - name: Commit verified wire patch
+        shell: bash
+        run: |
+          git config user.name "izzback"
+          git config user.email "poolarismining1@gmail.com"
+          git add \
+            protocol/p2p/proto/p2p.proto \
+            protocol/flows/src/ibd/flow.rs \
+            protocol/flows/src/ibd_v2/state.rs \
+            protocol/flows/src/v7/request_service_state.rs
+          git diff --cached --exit-code && { echo "wire patch produced no changes"; exit 1; } || true
+          git commit -m "feat(ibd-v2): add resumable service-state wire metadata"
+          git push origin HEAD:ibd-v2
