@@ -173,7 +173,7 @@ fn encode_record(record: CheckpointRecord) -> Vec<u8> {
     out.extend_from_slice(MAGIC);
     out.extend_from_slice(&VERSION.to_le_bytes());
     out.extend_from_slice(&record.generation.to_le_bytes());
-    out.extend_from_slice(record.metadata.pruning_point.as_bytes());
+    out.extend_from_slice(&record.metadata.pruning_point.as_bytes());
     out.extend_from_slice(&record.metadata.next_cursor.to_le_bytes());
     out.extend_from_slice(&record.metadata.chunk_count.to_le_bytes());
     out.extend_from_slice(&record.metadata.row_count.to_le_bytes());
