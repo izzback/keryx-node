@@ -29,8 +29,7 @@ on:
       - '.github/workflows/ibd-v2-ci.yml'
   workflow_dispatch:
 
-# Keep the permanent IBD v2 certification gate read-only. Temporary staging
-# writers must be removed before a checkpoint is considered certified.
+# Permanent IBD v2 certification gate: it must never mutate the repository.
 permissions:
   contents: read
 
@@ -88,70 +87,3 @@ jobs:
 
       - name: Test P2P flows crate
         run: cargo test -p keryx-p2p-flows
-
-  stage-client-wire:
-    name: Stage client resumable metadata validation
-    if: github.event_name == 'pull_request' && github.event.pull_request.head.ref == 'ibd-v2'
-    permissions:
-      contents: write
-    runs-on: ubuntu-latest
-    timeout-minutes: 30
-
-    steps:
-      - name: Checkout ibd-v2
-        uses: actions/checkout@v4
-        with:
-          ref: ibd-v2
-          fetch-depth: 0
-
-      - name: Detect whether staging is needed
-        id: detect
-        shell: bash
-        run: |
-          if grep -q 'invalid IBD v2 service-state chunk metadata' protocol/flows/src/ibd/flow.rs; then
-            echo 'needed=false' >> "$GITHUB_OUTPUT"
-          else
-            echo 'needed=true' >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Install protoc
-        if: steps.detect.outputs.needed == 'true'
-        uses: arduino/setup-protoc@v3
-        with:
-          repo-token: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Install pinned Rust toolchain
-        if: steps.detect.outputs.needed == 'true'
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: 1.93.0
-          components: rustfmt, clippy
-
-      - name: Apply client wire tracker patch
-        if: steps.detect.outputs.needed == 'true'
-        run: python .github/scripts/stage-ibd-v2-client-wire-tracker.py
-
-      - name: Format modified Rust files
-        if: steps.detect.outputs.needed == 'true'
-        run: |
-          rustfmt --edition 2024 protocol/flows/src/ibd/flow.rs protocol/flows/src/ibd_v2/service_state.rs
-          git diff --check
-
-      - name: Check staged P2P flows crate
-        if: steps.detect.outputs.needed == 'true'
-        run: cargo check -p keryx-p2p-flows --all-targets
-
-      - name: Clippy staged P2P flows crate
-        if: steps.detect.outputs.needed == 'true'
-        run: cargo clippy -p keryx-p2p-flows --all-targets --no-deps -- -D warnings -A clippy::collapsible_if
-
-      - name: Commit verified client wire tracker
-        if: steps.detect.outputs.needed == 'true'
-        shell: bash
-        run: |
-          git config user.name "izzback"
-          git config user.email "poolarismining1@gmail.com"
-          git add protocol/flows/src/ibd/flow.rs protocol/flows/src/ibd_v2/service_state.rs
-          git diff --cached --exit-code && { echo "client wire patch produced no changes"; exit 1; } || true
-          git commit -m "ibd-v2(service-state): validate resumable metadata client-side"
-          git push origin HEAD:ibd-v2
