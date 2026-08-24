@@ -11,6 +11,9 @@ pub mod metrics;
 pub mod service_state;
 pub mod state;
 
+#[cfg(test)]
+mod recovery_tests;
+
 /// Runtime opt-in used while IBD v2 is experimental.
 pub const ENABLE_ENV: &str = "KERYX_IBD_V2";
 
