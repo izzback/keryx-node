@@ -7,8 +7,11 @@ on:
     paths:
       - 'protocol/flows/src/ibd/**'
       - 'protocol/flows/src/ibd_v2/**'
+      - 'protocol/flows/src/v7/request_service_state.rs'
       - 'protocol/flows/src/lib.rs'
       - 'protocol/flows/Cargo.toml'
+      - 'protocol/p2p/proto/**'
+      - 'protocol/p2p/src/convert/messages.rs'
       - 'docs/ibd-v2/**'
       - '.github/workflows/ibd-v2-ci.yml'
   pull_request:
@@ -17,8 +20,11 @@ on:
     paths:
       - 'protocol/flows/src/ibd/**'
       - 'protocol/flows/src/ibd_v2/**'
+      - 'protocol/flows/src/v7/request_service_state.rs'
       - 'protocol/flows/src/lib.rs'
       - 'protocol/flows/Cargo.toml'
+      - 'protocol/p2p/proto/**'
+      - 'protocol/p2p/src/convert/messages.rs'
       - 'docs/ibd-v2/**'
       - '.github/workflows/ibd-v2-ci.yml'
   workflow_dispatch:
@@ -65,7 +71,12 @@ jobs:
             protocol/flows/src/ibd_v2/*.rs \
             protocol/flows/src/ibd/flow.rs \
             protocol/flows/src/ibd/progress.rs \
-            protocol/flows/src/ibd/streams.rs
+            protocol/flows/src/ibd/streams.rs \
+            protocol/flows/src/v7/request_service_state.rs \
+            protocol/p2p/src/convert/messages.rs
+
+      - name: Check P2P wire crate
+        run: cargo check -p keryx-p2p-lib --all-targets
 
       - name: Check P2P flows crate
         run: cargo check -p keryx-p2p-flows --all-targets
