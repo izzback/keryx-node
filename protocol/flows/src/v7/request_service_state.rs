@@ -49,9 +49,7 @@ impl RequestServiceStateFlow {
         drop(session);
         debug!("Serving {} service-state rows for pruning point {}", rows.len(), pruning_point);
         for chunk in rows.chunks(SERVICE_STATE_CHUNK_ROWS) {
-            self.router
-                .enqueue(make_message!(Payload::ServiceStateChunk, ServiceStateChunkMessage { rows: chunk.to_vec() }))
-                .await?;
+            self.router.enqueue(make_message!(Payload::ServiceStateChunk, ServiceStateChunkMessage { rows: chunk.to_vec() })).await?;
         }
         self.router.enqueue(make_message!(Payload::DoneServiceStateChunks, DoneServiceStateChunksMessage {})).await?;
         Ok(())
