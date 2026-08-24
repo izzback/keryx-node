@@ -75,7 +75,7 @@ impl ServiceStateResumeMetadata {
         Self { pruning_point, next_cursor: 0, chunk_count: 0, row_count: 0, last_row_fingerprint: None }
     }
 
-    pub const fn can_resume_from(&self, pruning_point: Hash) -> bool {
+    pub fn can_resume_from(&self, pruning_point: Hash) -> bool {
         self.pruning_point == pruning_point && self.next_cursor > 0 && self.last_row_fingerprint.is_some()
     }
 
