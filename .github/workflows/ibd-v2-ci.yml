@@ -22,6 +22,7 @@ on:
   pull_request:
     branches:
       - ibd-v2-base-v1.5.4
+      - ibd-v2
     paths:
       - 'protocol/flows/src/ibd/**'
       - 'protocol/flows/src/ibd_v2/**'
@@ -30,6 +31,10 @@ on:
       - 'protocol/flows/Cargo.toml'
       - 'protocol/p2p/proto/**'
       - 'protocol/p2p/src/convert/messages.rs'
+      - 'consensus/core/src/**'
+      - 'consensus/src/**'
+      - 'database/src/**'
+      - 'keryxd/src/**'
       - 'docs/ibd-v2/**'
       - '.github/workflows/ibd-v2-ci.yml'
   workflow_dispatch:
@@ -63,6 +68,7 @@ jobs:
         with:
           toolchain: 1.93.0
           components: rustfmt, clippy
+          targets: aarch64-unknown-linux-gnu
 
       - name: Cache Rust build
         uses: Swatinem/rust-cache@v2
@@ -99,6 +105,9 @@ jobs:
 
       - name: Test consensus core including PoM v4 SIMD equivalence
         run: cargo test -p keryx-consensus-core
+
+      - name: Check consensus core AArch64 NEON path
+        run: cargo check -p keryx-consensus-core --lib --target aarch64-unknown-linux-gnu
 
       - name: Check consensus storage
         run: cargo check -p keryx-consensus --all-targets
