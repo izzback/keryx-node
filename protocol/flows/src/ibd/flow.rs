@@ -771,7 +771,11 @@ impl IbdFlow {
         self.router
             .enqueue(make_message!(
                 Payload::RequestServiceState,
-                RequestServiceStateMessage { pruning_point_hash: Some(pruning_point.into()) }
+                RequestServiceStateMessage {
+                    pruning_point_hash: Some(pruning_point.into()),
+                    start_cursor: None,
+                    previous_row_fingerprint: None
+                }
             ))
             .await?;
         let handoff_cutoff = pp_daa + keryx_consensus_core::collateral::SERVICE_STATE_HANDOFF_DAA;

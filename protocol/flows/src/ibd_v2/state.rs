@@ -3,7 +3,7 @@
 //! Stages are deliberately tracked separately so a restart does not force the
 //! node to repeat work that was already verified or committed.
 
-use keryx_hashes::Hash;
+use keryx_hashes::{Hash, Hasher, MuHashElementHash};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Stage {
@@ -70,6 +70,13 @@ pub enum ServiceStateResumeError {
     CursorRowMismatch { expected: u64, next: u64 },
 }
 
+/// Content anchor used when a service-state transfer resumes from another peer.
+/// This deliberately reuses Keryx's MuHash element domain so both peers derive
+/// the same 32-byte fingerprint from the exact canonical row bytes.
+pub fn service_state_row_fingerprint(row: &[u8]) -> [u8; 32] {
+    MuHashElementHash::hash(row).as_bytes()
+}
+
 impl ServiceStateResumeMetadata {
     pub const fn new(pruning_point: Hash) -> Self {
         Self { pruning_point, next_cursor: 0, chunk_count: 0, row_count: 0, last_row_fingerprint: None }
@@ -110,11 +117,17 @@ impl ServiceStateResumeMetadata {
 
 #[cfg(test)]
 mod tests {
-    use super::{ServiceStateResumeError, ServiceStateResumeMetadata};
+    use super::{ServiceStateResumeError, ServiceStateResumeMetadata, service_state_row_fingerprint};
     use keryx_hashes::Hash;
 
     fn pruning_point(byte: u8) -> Hash {
         Hash::from_bytes([byte; 32])
+    }
+
+    #[test]
+    fn service_state_row_fingerprint_is_content_bound() {
+        assert_eq!(service_state_row_fingerprint(b"row-a"), service_state_row_fingerprint(b"row-a"));
+        assert_ne!(service_state_row_fingerprint(b"row-a"), service_state_row_fingerprint(b"row-b"));
     }
 
     #[test]
