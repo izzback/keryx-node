@@ -4,6 +4,7 @@
 //! During the early project phases it must not change consensus validity rules or
 //! replace legacy IBD by default.
 
+pub mod checkpoint;
 pub mod compat;
 pub mod metrics;
 pub mod service_state;
