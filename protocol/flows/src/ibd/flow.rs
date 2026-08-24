@@ -2,7 +2,10 @@ use crate::{
     flow_context::FlowContext,
     flow_trait::Flow,
     ibd::{HeadersChunkStream, TrustedEntryStream, negotiate::ChainNegotiationOutput},
-    ibd_v2::metrics::{StageMetrics, metrics_enabled},
+    ibd_v2::{
+        metrics::{StageMetrics, metrics_enabled},
+        service_state::ServiceStateWireTracker,
+    },
 };
 use futures::future::{Either, join_all, select, try_join_all};
 use itertools::Itertools;
@@ -783,6 +786,7 @@ impl IbdFlow {
         let mut prefix_rows = 0usize;
         let mut acc = MuHash::new();
         let mut metrics = StageMetrics::new();
+        let mut resume_tracker = crate::ibd_v2::enabled_from_env().then(|| ServiceStateWireTracker::new(pruning_point));
         loop {
             let wait_started = metrics_enabled().then(Instant::now);
             let received = tokio::time::timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT, self.incoming_route.recv()).await;
@@ -792,6 +796,13 @@ impl IbdFlow {
             match received {
                 Ok(Some(msg)) => match msg.payload {
                     Some(Payload::ServiceStateChunk(chunk)) => {
+                        if let Some(tracker) = &mut resume_tracker {
+                            let chunk_pruning_point: Option<Hash> =
+                                chunk.pruning_point_hash.clone().map(TryInto::try_into).transpose()?;
+                            tracker.accept_chunk(chunk_pruning_point, chunk.start_cursor, chunk.next_cursor, &chunk.rows).map_err(
+                                |err| ProtocolError::OtherOwned(format!("invalid IBD v2 service-state chunk metadata: {err:?}")),
+                            )?;
+                        }
                         if metrics_enabled() {
                             let chunk_rows = chunk.rows.len() as u64;
                             let chunk_bytes = chunk.rows.iter().map(|row| row.len() as u64).sum();
@@ -816,7 +827,15 @@ impl IbdFlow {
                             metrics.record_validation_time(validation_started.elapsed());
                         }
                     }
-                    Some(Payload::DoneServiceStateChunks(_)) => break,
+                    Some(Payload::DoneServiceStateChunks(done)) => {
+                        if let Some(tracker) = &mut resume_tracker {
+                            let done_pruning_point: Option<Hash> = done.pruning_point_hash.map(TryInto::try_into).transpose()?;
+                            tracker.accept_done(done_pruning_point, done.next_cursor).map_err(|err| {
+                                ProtocolError::OtherOwned(format!("invalid IBD v2 service-state completion metadata: {err:?}"))
+                            })?;
+                        }
+                        break;
+                    }
                     _ => {
                         return Err(ProtocolError::UnexpectedMessage(
                             stringify!(Payload::ServiceStateChunk | Payload::DoneServiceStateChunks),
@@ -827,6 +846,16 @@ impl IbdFlow {
                 Ok(None) => return Err(ProtocolError::ConnectionClosed),
                 Err(_) => return Err(ProtocolError::Timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT)),
             }
+        }
+        if let Some(tracker) = resume_tracker {
+            let checkpoint = tracker.metadata();
+            debug!(
+                "IBD v2 service-state wire mode={:?} checkpoint_cursor={} checkpoint_chunks={} checkpoint_rows={}",
+                tracker.mode(),
+                checkpoint.next_cursor,
+                checkpoint.chunk_count,
+                checkpoint.row_count
+            );
         }
         // Mirror `commitment_at` exactly: no rows seals nothing, and the expected value is then
         // the zero hash.
