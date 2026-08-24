@@ -1,0 +1,33 @@
+name: Selfref GHOSTDAG Study
+
+on:
+  push:
+    branches:
+      - selfref-study
+    paths:
+      - "consensus/src/processes/ghostdag/**"
+      - ".github/workflows/selfref-study.yaml"
+  workflow_dispatch:
+
+jobs:
+  ghostdag-selfref:
+    runs-on: ubuntu-24.04
+    steps:
+      - name: Checkout sources
+        uses: actions/checkout@v4
+
+      - name: Install Protoc
+        uses: arduino/setup-protoc@v3
+        with:
+          repo-token: ${{ secrets.GITHUB_TOKEN }}
+          version: "23.x"
+
+      - name: Install stable Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Check formatting of study files
+        run: cargo fmt --all --check
+        continue-on-error: true
+
+      - name: Compile and run Keryx-native self-reference fixtures
+        run: cargo test -p keryx-consensus selfref_validation -- --nocapture
