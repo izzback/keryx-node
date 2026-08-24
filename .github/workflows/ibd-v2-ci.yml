@@ -4,6 +4,7 @@ on:
   push:
     branches:
       - ibd-v2
+      - ibd-v2-integrate-b74615d
     paths:
       - 'protocol/flows/src/ibd/**'
       - 'protocol/flows/src/ibd_v2/**'
@@ -12,6 +13,10 @@ on:
       - 'protocol/flows/Cargo.toml'
       - 'protocol/p2p/proto/**'
       - 'protocol/p2p/src/convert/messages.rs'
+      - 'consensus/core/src/**'
+      - 'consensus/src/**'
+      - 'database/src/**'
+      - 'keryxd/src/**'
       - 'docs/ibd-v2/**'
       - '.github/workflows/ibd-v2-ci.yml'
   pull_request:
@@ -40,9 +45,9 @@ concurrency:
 
 jobs:
   flows:
-    name: IBD v2 flows gate
+    name: IBD v2 + upstream integration gate
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    timeout-minutes: 40
 
     steps:
       - name: Checkout sources
@@ -63,7 +68,7 @@ jobs:
         uses: Swatinem/rust-cache@v2
         with:
           workspaces: .
-          shared-key: ibd-v2-flows-rust-1.93
+          shared-key: ibd-v2-upstream-b74615d-rust-1.93
           cache-on-failure: true
 
       - name: Check formatting of IBD v2 touch points
@@ -88,3 +93,18 @@ jobs:
 
       - name: Test P2P flows crate
         run: cargo test -p keryx-p2p-flows
+
+      - name: Check consensus core
+        run: cargo check -p keryx-consensus-core --all-targets
+
+      - name: Test consensus core including PoM v4 SIMD equivalence
+        run: cargo test -p keryx-consensus-core
+
+      - name: Check consensus storage
+        run: cargo check -p keryx-consensus --all-targets
+
+      - name: Check database
+        run: cargo check -p keryx-database --all-targets
+
+      - name: Check keryxd
+        run: cargo check -p keryxd
