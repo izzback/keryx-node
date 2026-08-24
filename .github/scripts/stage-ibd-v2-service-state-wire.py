@@ -3,6 +3,7 @@ from pathlib import Path
 proto_path = Path("protocol/p2p/proto/p2p.proto")
 flow_path = Path("protocol/flows/src/ibd/flow.rs")
 server_path = Path("protocol/flows/src/v7/request_service_state.rs")
+state_path = Path("protocol/flows/src/ibd_v2/state.rs")
 
 proto = proto_path.read_text(encoding="utf-8")
 old_proto = """message RequestServiceStateMessage {
@@ -48,10 +49,72 @@ if flow.count(old_request) != 1:
     raise SystemExit("service-state requester anchor mismatch")
 flow_path.write_text(flow.replace(old_request, new_request), encoding="utf-8")
 
+state = state_path.read_text(encoding="utf-8")
+old_import = "use keryx_hashes::Hash;"
+new_import = "use keryx_hashes::{Hash, Hasher, MuHashElementHash};"
+if state.count(old_import) != 1:
+    raise SystemExit("service-state fingerprint import anchor mismatch")
+state = state.replace(old_import, new_import)
+
+error_anchor = """pub enum ServiceStateResumeError {
+    EmptyChunk,
+    NonAdvancingCursor { current: u64, next: u64 },
+    CursorRowMismatch { expected: u64, next: u64 },
+}
+
+"""
+helper = """pub enum ServiceStateResumeError {
+    EmptyChunk,
+    NonAdvancingCursor { current: u64, next: u64 },
+    CursorRowMismatch { expected: u64, next: u64 },
+}
+
+/// Content anchor used when a service-state transfer resumes from another peer.
+/// This deliberately reuses Keryx's MuHash element domain so both peers derive
+/// the same 32-byte fingerprint from the exact canonical row bytes.
+pub fn service_state_row_fingerprint(row: &[u8]) -> [u8; 32] {
+    MuHashElementHash::hash(row).as_bytes()
+}
+
+"""
+if state.count(error_anchor) != 1:
+    raise SystemExit("service-state fingerprint helper anchor mismatch")
+state = state.replace(error_anchor, helper)
+
+mod_anchor = """mod tests {
+    use super::{ServiceStateResumeError, ServiceStateResumeMetadata};
+"""
+mod_replacement = """mod tests {
+    use super::{service_state_row_fingerprint, ServiceStateResumeError, ServiceStateResumeMetadata};
+"""
+if state.count(mod_anchor) != 1:
+    raise SystemExit("service-state fingerprint test import anchor mismatch")
+state = state.replace(mod_anchor, mod_replacement)
+
+test_anchor = """    #[test]
+    fn service_state_resume_metadata_advances_only_after_complete_chunks() {
+"""
+test_replacement = """    #[test]
+    fn service_state_row_fingerprint_is_content_bound() {
+        assert_eq!(service_state_row_fingerprint(b"row-a"), service_state_row_fingerprint(b"row-a"));
+        assert_ne!(service_state_row_fingerprint(b"row-a"), service_state_row_fingerprint(b"row-b"));
+    }
+
+    #[test]
+    fn service_state_resume_metadata_advances_only_after_complete_chunks() {
+"""
+if state.count(test_anchor) != 1:
+    raise SystemExit("service-state fingerprint test anchor mismatch")
+state_path.write_text(state.replace(test_anchor, test_replacement), encoding="utf-8")
+
 server_path.write_text(
-    '''use crate::{flow_context::FlowContext, flow_trait::Flow};
+    '''use crate::{
+    flow_context::FlowContext,
+    flow_trait::Flow,
+    ibd_v2::state::service_state_row_fingerprint,
+};
 use keryx_core::debug;
-use keryx_hashes::{Hash, Hasher, MuHashElementHash};
+use keryx_hashes::Hash;
 use keryx_p2p_lib::{
     IncomingRoute, Router,
     common::ProtocolError,
@@ -121,7 +184,7 @@ impl RequestServiceStateFlow {
             if expected.len() != 32 {
                 return Err(ProtocolError::Other("invalid service-state previous-row fingerprint length"));
             }
-            let actual = MuHashElementHash::hash(&rows[start - 1]).as_bytes();
+            let actual = service_state_row_fingerprint(&rows[start - 1]);
             if expected.as_slice() != actual.as_slice() {
                 return Err(ProtocolError::Other("service-state resume anchor mismatch"));
             }
