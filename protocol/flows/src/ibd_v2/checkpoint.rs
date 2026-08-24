@@ -214,13 +214,8 @@ fn decode_record(bytes: &[u8]) -> io::Result<CheckpointRecord> {
         return Err(io::Error::new(io::ErrorKind::InvalidData, "invalid IBD v2 checkpoint metadata"));
     }
     let last_row_fingerprint = (has_fingerprint == 1).then_some(fingerprint);
-    let metadata = ServiceStateResumeMetadata {
-        pruning_point: Hash::from_bytes(pp),
-        next_cursor,
-        chunk_count,
-        row_count,
-        last_row_fingerprint,
-    };
+    let metadata =
+        ServiceStateResumeMetadata { pruning_point: Hash::from_bytes(pp), next_cursor, chunk_count, row_count, last_row_fingerprint };
     Ok(CheckpointRecord { generation, metadata, data_len })
 }
 
@@ -280,12 +275,8 @@ fn remove_if_exists(path: &Path) -> io::Result<()> {
 }
 
 fn take<'a>(bytes: &'a [u8], pos: &mut usize, len: usize) -> io::Result<&'a [u8]> {
-    let end = pos
-        .checked_add(len)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "checkpoint field overflow"))?;
-    let out = bytes
-        .get(*pos..end)
-        .ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "truncated checkpoint metadata"))?;
+    let end = pos.checked_add(len).ok_or_else(|| io::Error::new(io::ErrorKind::InvalidData, "checkpoint field overflow"))?;
+    let out = bytes.get(*pos..end).ok_or_else(|| io::Error::new(io::ErrorKind::UnexpectedEof, "truncated checkpoint metadata"))?;
     *pos = end;
     Ok(out)
 }
@@ -314,9 +305,7 @@ mod tests {
 
     fn advance(metadata: &mut ServiceStateResumeMetadata, rows: &[Vec<u8>]) {
         let next = metadata.next_cursor + rows.len() as u64;
-        metadata
-            .record_chunk(next, rows.len() as u64, service_state_row_fingerprint(rows.last().unwrap()))
-            .unwrap();
+        metadata.record_chunk(next, rows.len() as u64, service_state_row_fingerprint(rows.last().unwrap())).unwrap();
     }
 
     #[test]
