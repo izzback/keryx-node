@@ -69,10 +69,7 @@ impl ServiceStateWireTracker {
 
         let pruning_point = pruning_point.expect("metadata_count guarantees pruning point");
         if pruning_point != self.metadata.pruning_point {
-            return Err(ServiceStateWireError::WrongPruningPoint {
-                expected: self.metadata.pruning_point,
-                received: pruning_point,
-            });
+            return Err(ServiceStateWireError::WrongPruningPoint { expected: self.metadata.pruning_point, received: pruning_point });
         }
 
         let start_cursor = start_cursor.expect("metadata_count guarantees start cursor");
@@ -95,11 +92,7 @@ impl ServiceStateWireTracker {
         Ok(())
     }
 
-    pub fn accept_done(
-        &mut self,
-        pruning_point: Option<Hash>,
-        next_cursor: Option<u64>,
-    ) -> Result<(), ServiceStateWireError> {
+    pub fn accept_done(&mut self, pruning_point: Option<Hash>, next_cursor: Option<u64>) -> Result<(), ServiceStateWireError> {
         match (pruning_point, next_cursor) {
             (None, None) => {
                 if self.mode == ServiceStateWireMode::Resumable {
