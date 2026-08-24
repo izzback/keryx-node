@@ -257,7 +257,7 @@ fn read_rows(path: &Path, record: CheckpointRecord) -> io::Result<Vec<Vec<u8>>> 
 }
 
 fn truncate_rows_to(path: &Path, len: u64) -> io::Result<()> {
-    let mut file = OpenOptions::new().create(true).write(true).open(path)?;
+    let mut file = OpenOptions::new().create(true).write(true).truncate(false).open(path)?;
     if file.metadata()?.len() != len {
         file.set_len(len)?;
         file.seek(SeekFrom::Start(len))?;
