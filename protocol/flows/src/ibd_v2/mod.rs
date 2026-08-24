@@ -6,6 +6,7 @@
 
 pub mod checkpoint;
 pub mod compat;
+pub mod completion;
 pub mod metrics;
 pub mod service_state;
 pub mod state;
