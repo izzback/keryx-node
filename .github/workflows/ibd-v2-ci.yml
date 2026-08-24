@@ -1,3 +1,4 @@
+# Retry marker: service-state wire staging after anchor hardening.
 name: Keryx IBD v2 CI
 
 on:
