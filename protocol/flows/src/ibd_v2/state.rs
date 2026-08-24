@@ -143,16 +143,10 @@ mod tests {
         let mut metadata = ServiceStateResumeMetadata::new(pruning_point(1));
 
         assert_eq!(metadata.record_chunk(0, 0, [1; 32]), Err(ServiceStateResumeError::EmptyChunk));
-        assert_eq!(
-            metadata.record_chunk(9, 10, [1; 32]),
-            Err(ServiceStateResumeError::CursorRowMismatch { expected: 10, next: 9 })
-        );
+        assert_eq!(metadata.record_chunk(9, 10, [1; 32]), Err(ServiceStateResumeError::CursorRowMismatch { expected: 10, next: 9 }));
 
         metadata.record_chunk(10, 10, [1; 32]).unwrap();
-        assert_eq!(
-            metadata.record_chunk(10, 1, [2; 32]),
-            Err(ServiceStateResumeError::NonAdvancingCursor { current: 10, next: 10 })
-        );
+        assert_eq!(metadata.record_chunk(10, 1, [2; 32]), Err(ServiceStateResumeError::NonAdvancingCursor { current: 10, next: 10 }));
         assert_eq!(metadata.next_cursor, 10);
         assert_eq!(metadata.row_count, 10);
     }
