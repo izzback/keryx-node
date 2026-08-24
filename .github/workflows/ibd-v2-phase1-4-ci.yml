@@ -10,6 +10,15 @@ on:
       - 'protocol/flows/src/flow_context.rs'
       - 'keryxd/src/daemon.rs'
       - '.github/workflows/ibd-v2-phase1-4-ci.yml'
+  pull_request:
+    branches:
+      - ibd-v2
+    paths:
+      - 'protocol/flows/src/ibd_v2/**'
+      - 'protocol/flows/src/ibd/**'
+      - 'protocol/flows/src/flow_context.rs'
+      - 'keryxd/src/daemon.rs'
+      - '.github/workflows/ibd-v2-phase1-4-ci.yml'
   workflow_dispatch:
 
 permissions:
