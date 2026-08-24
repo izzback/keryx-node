@@ -57,9 +57,7 @@ impl ServiceStateCompletionStore {
     }
 
     pub fn is_complete(&self, pruning_point: Hash, service_state_hash: Hash) -> io::Result<bool> {
-        Ok(self
-            .load()?
-            .is_some_and(|marker| marker.pruning_point == pruning_point && marker.service_state_hash == service_state_hash))
+        Ok(self.load()?.is_some_and(|marker| marker.pruning_point == pruning_point && marker.service_state_hash == service_state_hash))
     }
 
     /// Persist completion only after both the commitment check and consensus
@@ -171,9 +169,7 @@ mod tests {
         assert!(loaded.is_none());
         let rows = vec![b"row".to_vec()];
         let mut metadata = ServiceStateResumeMetadata::new(pruning_point);
-        metadata
-            .record_chunk(1, 1, crate::ibd_v2::state::service_state_row_fingerprint(&rows[0]))
-            .unwrap();
+        metadata.record_chunk(1, 1, crate::ibd_v2::state::service_state_row_fingerprint(&rows[0])).unwrap();
         checkpoint.append_chunk(&rows, metadata).unwrap();
         checkpoint.reset().unwrap();
 
