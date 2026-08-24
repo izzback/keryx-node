@@ -1,6 +1,10 @@
 use super::{checkpoint::ServiceStateCheckpointStore, service_state::ServiceStateWireTracker};
 use keryx_hashes::Hash;
-use std::{fs, path::PathBuf, time::{SystemTime, UNIX_EPOCH}};
+use std::{
+    fs,
+    path::PathBuf,
+    time::{SystemTime, UNIX_EPOCH},
+};
 
 fn temp_root(label: &str) -> PathBuf {
     let nonce = SystemTime::now().duration_since(UNIX_EPOCH).unwrap().as_nanos();
