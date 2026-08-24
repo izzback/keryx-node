@@ -52,9 +52,9 @@ flow_path.write_text(flow.replace(old_request, new_request), encoding="utf-8")
 state = state_path.read_text(encoding="utf-8")
 old_import = "use keryx_hashes::Hash;"
 new_import = "use keryx_hashes::{Hash, Hasher, MuHashElementHash};"
-if state.count(old_import) != 1:
+if old_import not in state:
     raise SystemExit("service-state fingerprint import anchor mismatch")
-state = state.replace(old_import, new_import)
+state = state.replace(old_import, new_import, 1)
 
 error_anchor = """pub enum ServiceStateResumeError {
     EmptyChunk,
