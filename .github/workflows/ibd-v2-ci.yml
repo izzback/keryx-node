@@ -29,6 +29,8 @@ on:
       - '.github/workflows/ibd-v2-ci.yml'
   workflow_dispatch:
 
+# Keep the permanent IBD v2 certification gate read-only. Temporary staging
+# writers must be removed before a checkpoint is considered certified.
 permissions:
   contents: read
 
