@@ -89,7 +89,7 @@ jobs:
 
   stage-service-state-wire:
     name: Stage resumable service-state wire
-    if: github.event_name == 'push' && github.ref == 'refs/heads/ibd-v2' && !contains(github.event.head_commit.message, 'feat(ibd-v2): add resumable service-state wire metadata')
+    if: (github.event_name == 'push' && github.ref == 'refs/heads/ibd-v2') || (github.event_name == 'pull_request' && github.head_ref == 'ibd-v2')
     permissions:
       contents: write
     runs-on: ubuntu-latest
@@ -102,21 +102,36 @@ jobs:
           ref: ibd-v2
           fetch-depth: 0
 
+      - name: Detect whether staging is needed
+        id: detect
+        shell: bash
+        run: |
+          if grep -q 'optional uint64 startCursor = 2;' protocol/p2p/proto/p2p.proto; then
+            echo 'needed=false' >> "$GITHUB_OUTPUT"
+            echo 'Resumable service-state wire metadata is already present.'
+          else
+            echo 'needed=true' >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Install protoc
+        if: steps.detect.outputs.needed == 'true'
         uses: arduino/setup-protoc@v3
         with:
           repo-token: ${{ secrets.GITHUB_TOKEN }}
 
       - name: Install pinned Rust toolchain
+        if: steps.detect.outputs.needed == 'true'
         uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: 1.93.0
           components: rustfmt, clippy
 
       - name: Apply resumable wire patch
+        if: steps.detect.outputs.needed == 'true'
         run: python .github/scripts/stage-ibd-v2-service-state-wire.py
 
       - name: Format modified Rust files
+        if: steps.detect.outputs.needed == 'true'
         run: |
           rustfmt --edition 2024 \
             protocol/flows/src/ibd_v2/state.rs \
@@ -125,15 +140,19 @@ jobs:
           git diff --check
 
       - name: Check staged P2P wire crate
+        if: steps.detect.outputs.needed == 'true'
         run: cargo check -p keryx-p2p-lib --all-targets
 
       - name: Check staged P2P flows crate
+        if: steps.detect.outputs.needed == 'true'
         run: cargo check -p keryx-p2p-flows --all-targets
 
       - name: Clippy staged P2P flows crate
+        if: steps.detect.outputs.needed == 'true'
         run: cargo clippy -p keryx-p2p-flows --all-targets --no-deps -- -D warnings -A clippy::collapsible_if
 
       - name: Commit verified wire patch
+        if: steps.detect.outputs.needed == 'true'
         shell: bash
         run: |
           git config user.name "izzback"
