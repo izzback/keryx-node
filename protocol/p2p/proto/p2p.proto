@@ -336,11 +336,18 @@ message TrustedDataMessage {
 // point. Rows are the canonical commitment byte forms (see consensus `service_commit`).
 message RequestServiceStateMessage {
   Hash pruningPointHash = 1;
+  optional uint64 startCursor = 2;
+  optional bytes previousRowFingerprint = 3;
 }
 
 message ServiceStateChunkMessage {
   repeated bytes rows = 1;
+  optional uint64 startCursor = 2;
+  optional uint64 nextCursor = 3;
+  Hash pruningPointHash = 4;
 }
 
 message DoneServiceStateChunksMessage {
+  optional uint64 nextCursor = 1;
+  Hash pruningPointHash = 2;
 }

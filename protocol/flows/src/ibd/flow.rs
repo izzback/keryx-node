@@ -2,6 +2,10 @@ use crate::{
     flow_context::FlowContext,
     flow_trait::Flow,
     ibd::{HeadersChunkStream, TrustedEntryStream, negotiate::ChainNegotiationOutput},
+    ibd_v2::{
+        metrics::{StageMetrics, metrics_enabled},
+        service_state::ServiceStateWireTracker,
+    },
 };
 use futures::future::{Either, join_all, select, try_join_all};
 use itertools::Itertools;
@@ -86,10 +90,36 @@ pub enum IbdType {
     PruningCatchUp { highest_known_syncer_chain_hash: Hash },
 }
 
+#[derive(Default)]
+struct PomChunkMetrics {
+    blocks: u64,
+    proofs: u64,
+    proof_bytes: u64,
+    reproofs_queued: u64,
+    discarded_historical_proofs: u64,
+    discarded_historical_bytes: u64,
+    decode_time: Duration,
+    peer_wait_time: Duration,
+}
+
+impl PomChunkMetrics {
+    fn merge(&mut self, other: Self) {
+        self.blocks = self.blocks.saturating_add(other.blocks);
+        self.proofs = self.proofs.saturating_add(other.proofs);
+        self.proof_bytes = self.proof_bytes.saturating_add(other.proof_bytes);
+        self.reproofs_queued = self.reproofs_queued.saturating_add(other.reproofs_queued);
+        self.discarded_historical_proofs = self.discarded_historical_proofs.saturating_add(other.discarded_historical_proofs);
+        self.discarded_historical_bytes = self.discarded_historical_bytes.saturating_add(other.discarded_historical_bytes);
+        self.decode_time = self.decode_time.saturating_add(other.decode_time);
+        self.peer_wait_time = self.peer_wait_time.saturating_add(other.peer_wait_time);
+    }
+}
+
 struct QueueChunkOutput {
     jobs: Vec<BlockValidationFuture>,
     daa_score: u64,
     timestamp: u64,
+    pom: PomChunkMetrics,
 }
 
 impl IbdFlow {
@@ -744,20 +774,43 @@ impl IbdFlow {
         self.router
             .enqueue(make_message!(
                 Payload::RequestServiceState,
-                RequestServiceStateMessage { pruning_point_hash: Some(pruning_point.into()) }
+                RequestServiceStateMessage {
+                    pruning_point_hash: Some(pruning_point.into()),
+                    start_cursor: None,
+                    previous_row_fingerprint: None
+                }
             ))
             .await?;
         let handoff_cutoff = pp_daa + keryx_consensus_core::collateral::SERVICE_STATE_HANDOFF_DAA;
         let mut rows: Vec<Vec<u8>> = Vec::new();
         let mut prefix_rows = 0usize;
         let mut acc = MuHash::new();
+        let mut metrics = StageMetrics::new();
+        let mut resume_tracker = crate::ibd_v2::enabled_from_env().then(|| ServiceStateWireTracker::new(pruning_point));
         loop {
-            match tokio::time::timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT, self.incoming_route.recv()).await {
+            let wait_started = metrics_enabled().then(Instant::now);
+            let received = tokio::time::timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT, self.incoming_route.recv()).await;
+            if let Some(wait_started) = wait_started {
+                metrics.record_peer_wait_time(wait_started.elapsed());
+            }
+            match received {
                 Ok(Some(msg)) => match msg.payload {
                     Some(Payload::ServiceStateChunk(chunk)) => {
+                        if let Some(tracker) = &mut resume_tracker {
+                            let chunk_pruning_point: Option<Hash> =
+                                chunk.pruning_point_hash.clone().map(TryInto::try_into).transpose()?;
+                            tracker.accept_chunk(chunk_pruning_point, chunk.start_cursor, chunk.next_cursor, &chunk.rows).map_err(
+                                |err| ProtocolError::OtherOwned(format!("invalid IBD v2 service-state chunk metadata: {err:?}")),
+                            )?;
+                        }
+                        if metrics_enabled() {
+                            let chunk_rows = chunk.rows.len() as u64;
+                            let chunk_bytes = chunk.rows.iter().map(|row| row.len() as u64).sum();
+                            metrics.record_transfer(chunk_rows, chunk_bytes);
+                        }
+                        let validation_started = metrics_enabled().then(Instant::now);
                         for row in chunk.rows {
-                            let daa = service_row_daa(&row)
-                                .ok_or(ProtocolError::Other("malformed service-state row"))?;
+                            let daa = service_row_daa(&row).ok_or(ProtocolError::Other("malformed service-state row"))?;
                             if daa > handoff_cutoff {
                                 return Err(ProtocolError::Other("service-state row beyond the handoff ceiling"));
                             }
@@ -770,8 +823,19 @@ impl IbdFlow {
                             }
                             rows.push(row);
                         }
+                        if let Some(validation_started) = validation_started {
+                            metrics.record_validation_time(validation_started.elapsed());
+                        }
                     }
-                    Some(Payload::DoneServiceStateChunks(_)) => break,
+                    Some(Payload::DoneServiceStateChunks(done)) => {
+                        if let Some(tracker) = &mut resume_tracker {
+                            let done_pruning_point: Option<Hash> = done.pruning_point_hash.map(TryInto::try_into).transpose()?;
+                            tracker.accept_done(done_pruning_point, done.next_cursor).map_err(|err| {
+                                ProtocolError::OtherOwned(format!("invalid IBD v2 service-state completion metadata: {err:?}"))
+                            })?;
+                        }
+                        break;
+                    }
                     _ => {
                         return Err(ProtocolError::UnexpectedMessage(
                             stringify!(Payload::ServiceStateChunk | Payload::DoneServiceStateChunks),
@@ -783,9 +847,23 @@ impl IbdFlow {
                 Err(_) => return Err(ProtocolError::Timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT)),
             }
         }
+        if let Some(tracker) = resume_tracker {
+            let checkpoint = tracker.metadata();
+            debug!(
+                "IBD v2 service-state wire mode={:?} checkpoint_cursor={} checkpoint_chunks={} checkpoint_rows={}",
+                tracker.mode(),
+                checkpoint.next_cursor,
+                checkpoint.chunk_count,
+                checkpoint.row_count
+            );
+        }
         // Mirror `commitment_at` exactly: no rows seals nothing, and the expected value is then
         // the zero hash.
+        let finalize_started = metrics_enabled().then(Instant::now);
         let computed = if prefix_rows == 0 { Hash::default() } else { acc.finalize() };
+        if let Some(finalize_started) = finalize_started {
+            metrics.record_validation_time(finalize_started.elapsed());
+        }
         if computed != expected {
             return Err(ProtocolError::OtherOwned(format!(
                 "service-state verification failed: peer rows hash to {}, header commits {}",
@@ -793,8 +871,33 @@ impl IbdFlow {
             )));
         }
         let handoff_rows = rows.len() - prefix_rows;
+        let storage_started = metrics_enabled().then(Instant::now);
         consensus.clone().spawn_blocking(move |c| c.import_service_state(rows)).await?;
-        info!("imported {} sealed service-state rows ({} verified, {} handoff)", prefix_rows + handoff_rows, prefix_rows, handoff_rows);
+        if let Some(storage_started) = storage_started {
+            metrics.record_storage_time(storage_started.elapsed());
+        }
+        info!(
+            "imported {} sealed service-state rows ({} verified, {} handoff)",
+            prefix_rows + handoff_rows,
+            prefix_rows,
+            handoff_rows
+        );
+        if metrics_enabled() {
+            info!(
+                "IBD-V2-METRICS: stage=service-state complete=true rows={} verified={} handoff={} bytes={} elapsed={:.3}s rate={:.2} rows/s throughput={:.2} MB/s peer_wait={:.3}s peer_wait_pct={:.1}% validation={:.3}s storage={:.3}s",
+                metrics.items,
+                prefix_rows,
+                handoff_rows,
+                metrics.bytes,
+                metrics.elapsed_seconds(),
+                metrics.items_per_second(),
+                metrics.megabytes_per_second(),
+                metrics.peer_wait_time.as_secs_f64(),
+                metrics.peer_wait_ratio() * 100.0,
+                metrics.validation_time.as_secs_f64(),
+                metrics.storage_time.as_secs_f64()
+            );
+        }
         Ok(())
     }
 
@@ -872,7 +975,16 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             .await?;
         let mut chunk_stream = PruningPointUtxosetChunkStream::new(&self.router, &mut self.incoming_route);
         let mut multiset = MuHash::new();
+        let processing_started = metrics_enabled().then(Instant::now);
+        let mut processing_chunks = 0u64;
+        let mut processing_utxos = 0u64;
+        let mut append_time = Duration::ZERO;
         while let Some(chunk) = chunk_stream.next().await? {
+            if metrics_enabled() {
+                processing_chunks = processing_chunks.saturating_add(1);
+                processing_utxos = processing_utxos.saturating_add(chunk.len() as u64);
+            }
+            let append_started = metrics_enabled().then(Instant::now);
             multiset = consensus
                 .clone()
                 .spawn_blocking(move |c| {
@@ -880,8 +992,34 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                     multiset
                 })
                 .await;
+            if let Some(append_started) = append_started {
+                append_time = append_time.saturating_add(append_started.elapsed());
+            }
         }
+        let import_started = metrics_enabled().then(Instant::now);
         consensus.clone().spawn_blocking(move |c| c.import_pruning_point_utxo_set(pruning_point, multiset)).await?;
+        let import_time = import_started.map(|started| started.elapsed()).unwrap_or(Duration::ZERO);
+        if metrics_enabled() {
+            let elapsed = processing_started.expect("metrics start is present when metrics are enabled").elapsed();
+            let elapsed_seconds = elapsed.as_secs_f64();
+            let processing_time = append_time.saturating_add(import_time);
+            let processing_ratio =
+                if elapsed_seconds == 0.0 { 0.0 } else { (processing_time.as_secs_f64() / elapsed_seconds).clamp(0.0, 1.0) };
+            let utxos_per_second = if elapsed_seconds == 0.0 { 0.0 } else { processing_utxos as f64 / elapsed_seconds };
+            let average_append_ms =
+                if processing_chunks == 0 { 0.0 } else { append_time.as_secs_f64() * 1000.0 / processing_chunks as f64 };
+            info!(
+                "IBD-V2-METRICS: stage=utxo-processing complete=true chunks={} utxos={} elapsed={:.3}s rate={:.2} utxos/s append={:.3}s avg_append={:.3}ms/chunk final_import={:.3}s processing_pct={:.1}%",
+                processing_chunks,
+                processing_utxos,
+                elapsed_seconds,
+                utxos_per_second,
+                append_time.as_secs_f64(),
+                average_append_ms,
+                import_time.as_secs_f64(),
+                processing_ratio * 100.0
+            );
+        }
         Ok(())
     }
     async fn sync_missing_trusted_bodies(&mut self, consensus: &ConsensusProxy) -> Result<(), ProtocolError> {
@@ -1020,17 +1158,26 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
         // deeper than the proof retention window below the target can never be relayed as recent,
         // so their proof would only be a doomed 200+ KB write that the GC deletes later.
         let high_daa = high_header.daa_score;
+        let pom_stage_started = metrics_enabled().then(Instant::now);
+        let mut pom_totals = PomChunkMetrics::default();
+        let mut validation_blocked = Duration::ZERO;
 
         let mut iter = hashes.chunks(IBD_BATCH_SIZE);
-        let QueueChunkOutput { jobs: mut prev_jobs, daa_score: mut prev_daa_score, timestamp: mut prev_timestamp } =
+        let QueueChunkOutput { jobs: mut prev_jobs, daa_score: mut prev_daa_score, timestamp: mut prev_timestamp, pom: first_pom } =
             self.queue_block_processing_chunk(consensus, iter.next().expect("hashes was non empty"), high_daa).await?;
+        pom_totals.merge(first_pom);
 
         for chunk in iter {
-            let QueueChunkOutput { jobs: current_jobs, daa_score: current_daa_score, timestamp: current_timestamp } =
+            let QueueChunkOutput { jobs: current_jobs, daa_score: current_daa_score, timestamp: current_timestamp, pom: current_pom } =
                 self.queue_block_processing_chunk(consensus, chunk, high_daa).await?;
+            pom_totals.merge(current_pom);
             let prev_chunk_len = prev_jobs.len();
             // Join the previous chunk so that we always concurrently process a chunk and receive another
+            let validation_wait_started = metrics_enabled().then(Instant::now);
             try_join_all(prev_jobs).await?;
+            if let Some(validation_wait_started) = validation_wait_started {
+                validation_blocked = validation_blocked.saturating_add(validation_wait_started.elapsed());
+            }
             // Log the progress
             progress_reporter.report(prev_chunk_len, prev_daa_score, prev_timestamp);
             prev_daa_score = current_daa_score;
@@ -1039,8 +1186,39 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
         }
 
         let prev_chunk_len = prev_jobs.len();
+        let validation_wait_started = metrics_enabled().then(Instant::now);
         try_join_all(prev_jobs).await?;
+        if let Some(validation_wait_started) = validation_wait_started {
+            validation_blocked = validation_blocked.saturating_add(validation_wait_started.elapsed());
+        }
         progress_reporter.report_completion(prev_chunk_len);
+        if metrics_enabled() {
+            let elapsed = pom_stage_started.expect("metrics start is present when metrics are enabled").elapsed();
+            let elapsed_seconds = elapsed.as_secs_f64();
+            let blocks_per_second = if elapsed_seconds == 0.0 { 0.0 } else { pom_totals.blocks as f64 / elapsed_seconds };
+            let proof_megabytes_per_second =
+                if elapsed_seconds == 0.0 { 0.0 } else { (pom_totals.proof_bytes as f64 / 1_000_000.0) / elapsed_seconds };
+            let peer_wait_ratio =
+                if elapsed_seconds == 0.0 { 0.0 } else { (pom_totals.peer_wait_time.as_secs_f64() / elapsed_seconds).clamp(0.0, 1.0) };
+            info!(
+                "IBD-V2-METRICS: stage=pom-body-sync mode={} complete=true blocks={} proofs={} proof_bytes={} proof_bytes_measured={} reproofs_queued={} discarded_historical_proofs={} discarded_historical_bytes={} elapsed={:.3}s rate={:.2} blocks/s proof_throughput={:.2} MB/s peer_wait={:.3}s peer_wait_pct={:.1}% decode={:.3}s validation_blocked={:.3}s",
+                if self.body_only_ibd_permitted { "body-only" } else { "full-block" },
+                pom_totals.blocks,
+                pom_totals.proofs,
+                pom_totals.proof_bytes,
+                self.body_only_ibd_permitted,
+                pom_totals.reproofs_queued,
+                pom_totals.discarded_historical_proofs,
+                pom_totals.discarded_historical_bytes,
+                elapsed_seconds,
+                blocks_per_second,
+                proof_megabytes_per_second,
+                pom_totals.peer_wait_time.as_secs_f64(),
+                peer_wait_ratio * 100.0,
+                pom_totals.decode_time.as_secs_f64(),
+                validation_blocked.as_secs_f64()
+            );
+        }
 
         Ok(())
     }
@@ -1067,6 +1245,7 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
         let mut jobs = Vec::with_capacity(chunk.len());
         let mut current_daa_score = 0;
         let mut current_timestamp = 0;
+        let mut pom = PomChunkMetrics { blocks: chunk.len() as u64, ..Default::default() };
         self.router
             .enqueue(make_message!(
                 Payload::RequestIbdBlocks,
@@ -1074,8 +1253,15 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             ))
             .await?;
         for &expected_hash in chunk {
+            let wait_started = metrics_enabled().then(Instant::now);
             let msg = dequeue_with_timeout!(self.incoming_route, Payload::IbdBlock)?;
+            if let Some(wait_started) = wait_started {
+                pom.peer_wait_time = pom.peer_wait_time.saturating_add(wait_started.elapsed());
+            }
             let mut block: Block = Versioned(self.header_format, msg).try_into()?;
+            if metrics_enabled() && block.pom_proof.is_some() {
+                pom.proofs = pom.proofs.saturating_add(1);
+            }
             if block.hash() != expected_hash {
                 return Err(ProtocolError::OtherOwned(format!("expected block {} but got {}", expected_hash, block.hash())));
             }
@@ -1083,6 +1269,9 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                 return Err(ProtocolError::OtherOwned(format!("sent header of {} where expected block with body", block.hash())));
             }
             if high_daa.saturating_sub(block.header.daa_score) > POM_PROOF_SERVE_DEPTH_DAA {
+                if metrics_enabled() && block.pom_proof.is_some() {
+                    pom.discarded_historical_proofs = pom.discarded_historical_proofs.saturating_add(1);
+                }
                 block.pom_tier = block.pom_tier.or_else(|| block.pom_proof.as_ref().map(|p| p.tier));
                 block.pom_proof = None;
             } else if block.pom_proof.is_none() && self.ctx.config.pom_activation.is_active(block.header.daa_score) {
@@ -1090,12 +1279,15 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                 // window: persisting it as-is would make us the next contagion source. Queue it
                 // for the relay flow to re-fetch the proof from another peer.
                 self.ctx.enqueue_pom_reproof(block.hash());
+                if metrics_enabled() {
+                    pom.reproofs_queued = pom.reproofs_queued.saturating_add(1);
+                }
             }
             current_daa_score = block.header.daa_score;
             current_timestamp = block.header.timestamp;
             jobs.push(consensus.validate_and_insert_block_ibd(block).virtual_state_task);
         }
-        Ok(QueueChunkOutput { jobs, daa_score: current_daa_score, timestamp: current_timestamp })
+        Ok(QueueChunkOutput { jobs, daa_score: current_daa_score, timestamp: current_timestamp, pom })
     }
 
     async fn queue_block_processing_chunk_body_only(
@@ -1107,6 +1299,7 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
         let mut jobs = Vec::with_capacity(chunk.len());
         let mut current_daa_score = 0;
         let mut current_timestamp = 0;
+        let mut pom = PomChunkMetrics { blocks: chunk.len() as u64, ..Default::default() };
         self.router
             .enqueue(make_request!(
                 Payload::RequestBlockBodies,
@@ -1115,12 +1308,23 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             ))
             .await?;
         for &expected_hash in chunk {
+            let wait_started = metrics_enabled().then(Instant::now);
             let msg = dequeue_with_timeout!(self.incoming_route, Payload::BlockBody)?;
+            if let Some(wait_started) = wait_started {
+                pom.peer_wait_time = pom.peer_wait_time.saturating_add(wait_started.elapsed());
+            }
+            let proof_bytes =
+                if metrics_enabled() { msg.pom_proof.as_deref().map(|proof| proof.len() as u64).unwrap_or(0) } else { 0 };
+            if proof_bytes > 0 {
+                pom.proofs = pom.proofs.saturating_add(1);
+                pom.proof_bytes = pom.proof_bytes.saturating_add(proof_bytes);
+            }
             // Capture the proven tier and possession proof before consuming `msg`. The tier is
             // needed to validate the coinbase tier-reward split; the proof must be persisted so this
             // block can later be relayed to proof-enforcing peers (otherwise it is served "naked"
             // and rejected with "PoM possession proof missing").
             let pom_tier = msg.pom_tier.map(|t| t as u8);
+            let decode_started = metrics_enabled().then(Instant::now);
             let pom_proof = msg
                 .pom_proof
                 .as_deref()
@@ -1128,6 +1332,9 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                 .transpose()
                 .map_err(|_| ProtocolError::OtherOwned(format!("invalid pom_proof for block {}", expected_hash)))?
                 .map(Arc::new);
+            if let Some(decode_started) = decode_started {
+                pom.decode_time = pom.decode_time.saturating_add(decode_started.elapsed());
+            }
             // TODO (relaxed): make header queries in a batch.
             let blk_header = consensus.async_get_header(expected_hash).await.map_err(|err| {
                 // Conceptually this indicates local inconsistency, since we received the expected hashes via a local
@@ -1139,12 +1346,21 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                 return Err(ProtocolError::OtherOwned(format!("sent empty block body for block {}", expected_hash)));
             }
             let (pom_proof, pom_tier) = if high_daa.saturating_sub(blk_header.daa_score) > POM_PROOF_SERVE_DEPTH_DAA {
-                (None, pom_tier.or_else(|| pom_proof.as_ref().map(|p| p.tier)))
+                {
+                    if metrics_enabled() && pom_proof.is_some() {
+                        pom.discarded_historical_proofs = pom.discarded_historical_proofs.saturating_add(1);
+                        pom.discarded_historical_bytes = pom.discarded_historical_bytes.saturating_add(proof_bytes);
+                    }
+                    (None, pom_tier.or_else(|| pom_proof.as_ref().map(|p| p.tier)))
+                }
             } else {
                 if pom_proof.is_none() && self.ctx.config.pom_activation.is_active(blk_header.daa_score) {
                     // Naked-recent from the syncer — queue for the relay flow's proof re-fetch
                     // (see the full-block chunk path above).
                     self.ctx.enqueue_pom_reproof(blk_header.hash);
+                    if metrics_enabled() {
+                        pom.reproofs_queued = pom.reproofs_queued.saturating_add(1);
+                    }
                 }
                 (pom_proof, pom_tier)
             };
@@ -1153,6 +1369,6 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             current_timestamp = block.header.timestamp;
             jobs.push(consensus.validate_and_insert_block_ibd(block).virtual_state_task);
         }
-        Ok(QueueChunkOutput { jobs, daa_score: current_daa_score, timestamp: current_timestamp })
+        Ok(QueueChunkOutput { jobs, daa_score: current_daa_score, timestamp: current_timestamp, pom })
     }
 }
