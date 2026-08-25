@@ -4,10 +4,15 @@
 //! During the early project phases it must not change consensus validity rules or
 //! replace legacy IBD by default.
 
+pub mod checkpoint;
 pub mod compat;
+pub mod completion;
 pub mod metrics;
 pub mod service_state;
 pub mod state;
+
+#[cfg(test)]
+mod recovery_tests;
 
 /// Runtime opt-in used while IBD v2 is experimental.
 pub const ENABLE_ENV: &str = "KERYX_IBD_V2";
