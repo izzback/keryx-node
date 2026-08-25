@@ -24,12 +24,13 @@ fn service_state_resumes_after_crash_from_a_different_peer() {
     let first = vec![b"row-a".to_vec(), b"row-b".to_vec()];
     let (mut store, loaded) = ServiceStateCheckpointStore::open(&root, pruning_point).unwrap();
     assert!(loaded.is_none());
-    let mut peer_a = ServiceStateWireTracker::new(pruning_point);
-    peer_a.accept_chunk(Some(pruning_point), Some(0), Some(2), &first).unwrap();
-    store.append_chunk(&first, peer_a.metadata()).unwrap();
+    {
+        let mut peer_a = ServiceStateWireTracker::new(pruning_point);
+        peer_a.accept_chunk(Some(pruning_point), Some(0), Some(2), &first).unwrap();
+        store.append_chunk(&first, peer_a.metadata()).unwrap();
+    }
 
     // Simulate process loss: all RAM state disappears.
-    drop(peer_a);
     drop(store);
 
     // A new process and peer B must recover exclusively from durable state.
