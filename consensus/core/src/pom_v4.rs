@@ -204,18 +204,21 @@ unsafe fn v4_dot_i8_sse41(row: &[u8], col: &[u8]) -> i32 {
 unsafe fn v4_dot_i8_neon(row: &[u8], col: &[u8]) -> i32 {
     use std::arch::aarch64::*;
     unsafe {
-        fn half(row: *const i8, col: *const i8) -> int32x4_t {
-            let a = vld1q_s8(row);
-            let b = vld1q_s8(col);
-            let a_lo = vmovl_s8(vget_low_s8(a));
-            let a_hi = vmovl_s8(vget_high_s8(a));
-            let b_lo = vmovl_s8(vget_low_s8(b));
-            let b_hi = vmovl_s8(vget_high_s8(b));
-            let p0 = vmull_s16(vget_low_s16(a_lo), vget_low_s16(b_lo));
-            let p1 = vmull_high_s16(a_lo, b_lo);
-            let p2 = vmull_s16(vget_low_s16(a_hi), vget_low_s16(b_hi));
-            let p3 = vmull_high_s16(a_hi, b_hi);
-            vaddq_s32(vaddq_s32(p0, p1), vaddq_s32(p2, p3))
+        #[target_feature(enable = "neon")]
+        unsafe fn half(row: *const i8, col: *const i8) -> int32x4_t {
+            unsafe {
+                let a = vld1q_s8(row);
+                let b = vld1q_s8(col);
+                let a_lo = vmovl_s8(vget_low_s8(a));
+                let a_hi = vmovl_s8(vget_high_s8(a));
+                let b_lo = vmovl_s8(vget_low_s8(b));
+                let b_hi = vmovl_s8(vget_high_s8(b));
+                let p0 = vmull_s16(vget_low_s16(a_lo), vget_low_s16(b_lo));
+                let p1 = vmull_high_s16(a_lo, b_lo);
+                let p2 = vmull_s16(vget_low_s16(a_hi), vget_low_s16(b_hi));
+                let p3 = vmull_high_s16(a_hi, b_hi);
+                vaddq_s32(vaddq_s32(p0, p1), vaddq_s32(p2, p3))
+            }
         }
         let s0 = half(row.as_ptr() as *const i8, col.as_ptr() as *const i8);
         let s1 = half(row.as_ptr().add(16) as *const i8, col.as_ptr().add(16) as *const i8);
