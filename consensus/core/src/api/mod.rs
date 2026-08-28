@@ -412,6 +412,18 @@ pub trait ConsensusApi: Send + Sync {
     fn get_missing_block_body_hashes(&self, high: Hash) -> ConsensusResult<Vec<Hash>> {
         unimplemented!()
     }
+
+    /// Returns at most one bounded traversal window of body-missing hashes between an optional
+    /// chain cursor and `high`. `next_cursor` is consensus-derived and advances even when every
+    /// block in the traversed window already has a body; `done` means the scan reached `high`.
+    fn get_missing_block_body_hashes_batch(
+        &self,
+        low: Option<Hash>,
+        high: Hash,
+        max_blocks: usize,
+    ) -> ConsensusResult<(Vec<Hash>, Hash, bool)> {
+        unimplemented!()
+    }
     fn get_body_missing_anticone(&self) -> Vec<Hash> {
         unimplemented!()
     }

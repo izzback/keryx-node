@@ -1534,6 +1534,20 @@ impl ConsensusApi for Consensus {
         self.validate_block_exists(high)?;
         Ok(self.services.sync_manager.get_missing_block_body_hashes(high)?)
     }
+
+    fn get_missing_block_body_hashes_batch(
+        &self,
+        low: Option<Hash>,
+        high: Hash,
+        max_blocks: usize,
+    ) -> ConsensusResult<(Vec<Hash>, Hash, bool)> {
+        let _guard = self.pruning_lock.blocking_read();
+        self.validate_block_exists(high)?;
+        if let Some(low) = low {
+            self.validate_block_exists(low)?;
+        }
+        Ok(self.services.sync_manager.get_missing_block_body_hashes_batch(low, high, max_blocks)?)
+    }
     /// Returns the set of blocks in the anticone of the current pruning point
     /// which (may) lack a block body due to being in a transitional state
     /// If not in a transitional state this list is supposed to be empty

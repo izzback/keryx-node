@@ -53,6 +53,7 @@ use tokio::time::sleep;
 
 use super::{HeadersChunk, IBD_BATCH_SIZE, PruningPointUtxosetChunkStream, progress::ProgressReporter};
 type BlockBody = Vec<Transaction>;
+const IBD_BODY_SEARCH_BATCH_SIZE: usize = IBD_BATCH_SIZE * 64;
 
 /// Event daa of a canonical service-state row, `None` for a malformed one. Mirrors the row
 /// layouts in `service_commit`.
@@ -109,7 +110,7 @@ struct PomChunkMetrics {
 }
 
 impl PomChunkMetrics {
-    fn merge(&mut self, other: Self) {
+    fn merge(&mut self, other: &Self) {
         self.blocks = self.blocks.saturating_add(other.blocks);
         self.proofs = self.proofs.saturating_add(other.proofs);
         self.proof_bytes = self.proof_bytes.saturating_add(other.proof_bytes);
@@ -1539,69 +1540,92 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
         Ok(())
     }
     async fn sync_missing_block_bodies(&mut self, consensus: &ConsensusProxy, high: Hash) -> Result<(), ProtocolError> {
-        // TODO (relaxed): query consensus in batches
-        let sleep_task = sleep(Duration::from_secs(2));
-        let hashes_task = consensus.async_get_missing_block_body_hashes(high);
-        tokio::pin!(sleep_task);
-        tokio::pin!(hashes_task);
-        let hashes = match select(sleep_task, hashes_task).await {
-            Either::Left((_, hashes_task)) => {
-                // We select between the tasks in order to inform the user if this operation is taking too long. On full IBD
-                // this operation requires traversing the full DAG which indeed might take several seconds or even minutes.
-                info!(
-                    "IBD: searching for missing block bodies to request from peer {}. This operation might take several seconds.",
-                    self.router
-                );
-                // Now re-await the original task
-                hashes_task.await
-            }
-            Either::Right((hashes_result, _)) => hashes_result,
-        }?;
-        if hashes.is_empty() {
-            return Ok(());
-        }
-
-        let low_header = consensus.async_get_header(*hashes.first().expect("hashes was non empty")).await?;
-        let high_header = consensus.async_get_header(*hashes.last().expect("hashes was non empty")).await?;
-        let mut progress_reporter = ProgressReporter::new(low_header.daa_score, high_header.daa_score, "blocks");
-        // Sync target used to decide whether a block's possession proof is worth persisting: blocks
-        // deeper than the proof retention window below the target can never be relayed as recent,
-        // so their proof would only be a doomed 200+ KB write that the GC deletes later.
+        let high_header = consensus.async_get_header(high).await?;
         let high_daa = high_header.daa_score;
         let pom_stage_started = metrics_enabled().then(Instant::now);
         let mut pom_totals = PomChunkMetrics::default();
         let mut validation_blocked = Duration::ZERO;
+        let mut progress_reporter: Option<ProgressReporter> = None;
+        let mut previous: Option<QueueChunkOutput> = None;
+        let mut cursor: Option<Hash> = None;
+        let mut done = false;
+        let mut first_search = true;
+        let mut search_windows = 0u64;
+        let mut returned_hashes = 0u64;
 
-        let mut iter = hashes.chunks(IBD_BATCH_SIZE);
-        let QueueChunkOutput { jobs: mut prev_jobs, daa_score: mut prev_daa_score, timestamp: mut prev_timestamp, pom: first_pom } =
-            self.queue_block_processing_chunk(consensus, iter.next().expect("hashes was non empty"), high_daa).await?;
-        pom_totals.merge(first_pom);
+        while !done {
+            let search = consensus.async_get_missing_block_body_hashes_batch(cursor, high, IBD_BODY_SEARCH_BATCH_SIZE);
+            tokio::pin!(search);
+            let (hashes, next_cursor, batch_done) = if first_search {
+                let sleep_task = sleep(Duration::from_secs(2));
+                tokio::pin!(sleep_task);
+                match select(sleep_task, search).await {
+                    Either::Left((_, search)) => {
+                        info!(
+                            "IBD: searching for the first bounded missing-body window from peer {}. This operation might take several seconds.",
+                            self.router
+                        );
+                        search.await?
+                    }
+                    Either::Right((result, _)) => result?,
+                }
+            } else {
+                search.await?
+            };
+            first_search = false;
+            search_windows = search_windows.saturating_add(1);
+            returned_hashes = returned_hashes.saturating_add(hashes.len() as u64);
 
-        for chunk in iter {
-            let QueueChunkOutput { jobs: current_jobs, daa_score: current_daa_score, timestamp: current_timestamp, pom: current_pom } =
-                self.queue_block_processing_chunk(consensus, chunk, high_daa).await?;
-            pom_totals.merge(current_pom);
-            let prev_chunk_len = prev_jobs.len();
-            // Join the previous chunk so that we always concurrently process a chunk and receive another
-            let validation_wait_started = metrics_enabled().then(Instant::now);
-            try_join_all(prev_jobs).await?;
-            if let Some(validation_wait_started) = validation_wait_started {
-                validation_blocked = validation_blocked.saturating_add(validation_wait_started.elapsed());
+            if cursor == Some(next_cursor) && !batch_done {
+                return Err(ProtocolError::Other("bounded missing-body consensus scan did not advance its cursor"));
             }
-            // Log the progress
-            progress_reporter.report(prev_chunk_len, prev_daa_score, prev_timestamp);
-            prev_daa_score = current_daa_score;
-            prev_timestamp = current_timestamp;
-            prev_jobs = current_jobs;
+            cursor = Some(next_cursor);
+            done = batch_done;
+
+            if hashes.is_empty() {
+                continue;
+            }
+
+            if progress_reporter.is_none() {
+                let low_header = consensus.async_get_header(hashes[0]).await?;
+                progress_reporter = Some(ProgressReporter::new(low_header.daa_score, high_header.daa_score, "blocks"));
+            }
+
+            for chunk in hashes.chunks(IBD_BATCH_SIZE) {
+                let current = self.queue_block_processing_chunk(consensus, chunk, high_daa).await?;
+                pom_totals.merge(&current.pom);
+
+                if let Some(previous) = previous.replace(current) {
+                    let prev_chunk_len = previous.jobs.len();
+                    let validation_wait_started = metrics_enabled().then(Instant::now);
+                    try_join_all(previous.jobs).await?;
+                    if let Some(validation_wait_started) = validation_wait_started {
+                        validation_blocked = validation_blocked.saturating_add(validation_wait_started.elapsed());
+                    }
+                    progress_reporter.as_mut().expect("reporter exists once a missing body was queued").report(
+                        prev_chunk_len,
+                        previous.daa_score,
+                        previous.timestamp,
+                    );
+                }
+            }
         }
 
-        let prev_chunk_len = prev_jobs.len();
+        let Some(previous) = previous else {
+            if metrics_enabled() {
+                info!("IBD-V2-METRICS: stage=body-search complete=true search_windows={} returned_hashes=0", search_windows);
+            }
+            return Ok(());
+        };
+
+        let prev_chunk_len = previous.jobs.len();
         let validation_wait_started = metrics_enabled().then(Instant::now);
-        try_join_all(prev_jobs).await?;
+        try_join_all(previous.jobs).await?;
         if let Some(validation_wait_started) = validation_wait_started {
             validation_blocked = validation_blocked.saturating_add(validation_wait_started.elapsed());
         }
-        progress_reporter.report_completion(prev_chunk_len);
+        progress_reporter.take().expect("reporter exists once a missing body was queued").report_completion(prev_chunk_len);
+
         if metrics_enabled() {
             let elapsed = pom_stage_started.expect("metrics start is present when metrics are enabled").elapsed();
             let elapsed_seconds = elapsed.as_secs_f64();
@@ -1611,8 +1635,10 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             let peer_wait_ratio =
                 if elapsed_seconds == 0.0 { 0.0 } else { (pom_totals.peer_wait_time.as_secs_f64() / elapsed_seconds).clamp(0.0, 1.0) };
             info!(
-                "IBD-V2-METRICS: stage=pom-body-sync mode={} complete=true blocks={} proofs={} proof_bytes={} proof_bytes_measured={} reproofs_queued={} discarded_historical_proofs={} discarded_historical_bytes={} elapsed={:.3}s rate={:.2} blocks/s proof_throughput={:.2} MB/s peer_wait={:.3}s peer_wait_pct={:.1}% decode={:.3}s validation_blocked={:.3}s",
+                "IBD-V2-METRICS: stage=pom-body-sync mode={} complete=true search_windows={} returned_hashes={} blocks={} proofs={} proof_bytes={} proof_bytes_measured={} reproofs_queued={} discarded_historical_proofs={} discarded_historical_bytes={} elapsed={:.3}s rate={:.2} blocks/s proof_throughput={:.2} MB/s peer_wait={:.3}s peer_wait_pct={:.1}% decode={:.3}s validation_blocked={:.3}s",
                 if self.body_only_ibd_permitted { "body-only" } else { "full-block" },
+                search_windows,
+                returned_hashes,
                 pom_totals.blocks,
                 pom_totals.proofs,
                 pom_totals.proof_bytes,
@@ -1632,7 +1658,6 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
 
         Ok(())
     }
-
     async fn queue_block_processing_chunk(
         &mut self,
         consensus: &ConsensusProxy,

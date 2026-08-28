@@ -468,6 +468,15 @@ impl ConsensusSessionOwned {
         self.clone().spawn_blocking(move |c| c.get_missing_block_body_hashes(high)).await
     }
 
+    pub async fn async_get_missing_block_body_hashes_batch(
+        &self,
+        low: Option<Hash>,
+        high: Hash,
+        max_blocks: usize,
+    ) -> ConsensusResult<(Vec<Hash>, Hash, bool)> {
+        self.clone().spawn_blocking(move |c| c.get_missing_block_body_hashes_batch(low, high, max_blocks)).await
+    }
+
     pub async fn async_get_body_missing_anticone(&self) -> Vec<Hash> {
         self.clone().spawn_blocking(move |c| c.get_body_missing_anticone()).await
     }

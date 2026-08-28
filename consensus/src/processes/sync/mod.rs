@@ -201,6 +201,74 @@ impl<
         Ok(hashes_between)
     }
 
+    /// Bounded/cursor-based variant used by IBD v2 Phase 4. The first call (`low == None`)
+    /// locates the highest chain block whose body is already durable. Continuations pass the
+    /// previous `highest_reached`, avoiding a full pruning-point-to-tip rescan for every batch.
+    ///
+    /// The cursor follows chain progress, not the filtered result. This is important because a
+    /// traversal window may contain zero header-only blocks and must still make forward progress.
+    pub fn get_missing_block_body_hashes_batch(
+        &self,
+        low: Option<Hash>,
+        high: Hash,
+        max_blocks: usize,
+    ) -> SyncManagerResult<(Vec<Hash>, Hash, bool)> {
+        let pp = self.pruning_point_store.read().pruning_point().unwrap();
+        if !self.reachability_service.is_chain_ancestor_of(pp, high) {
+            return Err(SyncManagerError::PruningPointNotInChain(pp, high));
+        }
+
+        let low = if let Some(low) = low {
+            if !self.reachability_service.is_chain_ancestor_of(pp, low) || !self.reachability_service.is_chain_ancestor_of(low, high) {
+                return Err(SyncManagerError::LocatorLowHashNotInHighHashChain(low, high));
+            }
+            low
+        } else {
+            let mut highest_with_body = None;
+            let mut forward_iterator = self.reachability_service.forward_chain_iterator(pp, high, true).tuple_windows();
+            let mut backward_iterator = self.reachability_service.backward_chain_iterator(high, pp, true);
+            loop {
+                let Some((parent, current)) = forward_iterator.next() else {
+                    break;
+                };
+                if self.statuses_store.read().get(current).unwrap().is_header_only() {
+                    highest_with_body = Some(parent);
+                    break;
+                }
+
+                let Some(backward_current) = backward_iterator.next() else {
+                    break;
+                };
+                if self.statuses_store.read().get(backward_current).unwrap().has_block_body() {
+                    highest_with_body = Some(backward_current);
+                    break;
+                }
+            }
+
+            let Some(low) = highest_with_body else {
+                return Ok((vec![], high, true));
+            };
+            if low == high {
+                return Ok((vec![], high, true));
+            }
+            low
+        };
+
+        if low == high {
+            return Ok((vec![], high, true));
+        }
+
+        // `antipast_hashes_between` works with mergeset granularity, so a window must be at least
+        // the configured mergeset limit in order to guarantee cursor progress.
+        let max_blocks = max_blocks.max((self.mergeset_size_limit as usize).saturating_add(1));
+        let (mut hashes, highest_reached) = self.antipast_hashes_between(low, high, Some(max_blocks));
+        debug_assert_ne!(highest_reached, low, "bounded missing-body scan must advance its chain cursor");
+
+        let statuses = self.statuses_store.read();
+        hashes.retain(|&hash| statuses.get(hash).unwrap().is_header_only());
+        let done = highest_reached == high;
+        Ok((hashes, highest_reached, done))
+    }
     pub fn create_block_locator_from_pruning_point(
         &self,
         high: Hash,
