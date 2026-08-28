@@ -20,7 +20,6 @@ use keryx_consensus_core::{
     config::params::POM_PROOF_SERVE_DEPTH_DAA,
     header::Header,
     muhash::MuHashExtensions,
-    pom::PomProof,
     pruning::{PruningPointProof, PruningPointsList, PruningProofMetadata},
     trusted::TrustedBlock,
     tx::{Transaction, TransactionOutpoint, UtxoEntry},
@@ -33,6 +32,7 @@ use keryx_p2p_lib::{
     IncomingRoute, Router,
     common::ProtocolError,
     convert::{
+        block::decode_pom_proof,
         header::{HeaderFormat, Versioned},
         model::trusted::TrustedDataPackage,
     },
@@ -45,6 +45,7 @@ use keryx_p2p_lib::{
 };
 use keryx_utils::channel::JobReceiver;
 use std::{
+    collections::HashMap,
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -175,7 +176,7 @@ impl IbdFlow {
     async fn ibd(&mut self, relay_block: Block) -> Result<(), ProtocolError> {
         let mut session = self.ctx.consensus().session().await;
 
-        let negotiation_output = self.negotiate_missing_syncer_chain_segment(&session).await?;
+        let negotiation_output = self.negotiate_missing_syncer_chain_segment(&session, &relay_block.header).await?;
         let ibd_type = self
             .determine_ibd_type(
                 &session,
@@ -870,17 +871,45 @@ impl IbdFlow {
                 );
             }
         }
-        consensus.async_set_pruning_utxoset_stable().await;
         self.sync_service_state(consensus, pruning_point, relay_header).await?;
+        consensus.async_set_pruning_utxoset_stable().await;
         // Once a new utxoset is stored, the utxoindex needs to be resynced as well. This happens through the reset handler mechanism.
         let consensus_manager = self.ctx.consensus_manager.clone();
         spawn_blocking(move || consensus_manager.invoke_consensus_reset_handlers()).await.unwrap();
         self.ctx.on_pruning_point_utxoset_override();
         Ok(())
     }
+    /// The sealed service-state commitments carried by the last chain headers anchored at
+    /// `pruning_point` (selected-parent chain below the headers-selected tip), with their counts;
+    /// the relay header alone when no chain header carries that pruning point yet.
+    async fn service_commitment_votes(
+        &self,
+        consensus: &ConsensusProxy,
+        pruning_point: Hash,
+        relay_header: &Header,
+    ) -> Result<HashMap<Hash, usize>, ProtocolError> {
+        const VOTE_DEPTH: usize = 512;
+        let mut votes: HashMap<Hash, usize> = HashMap::new();
+        let mut hash = consensus.async_get_headers_selected_tip().await;
+        for _ in 0..VOTE_DEPTH {
+            let header = consensus.async_get_header(hash).await?;
+            if header.pruning_point == pruning_point {
+                *votes.entry(header.service_state_hash).or_default() += 1;
+            }
+            let Ok(ghostdag) = consensus.async_get_ghostdag_data(hash).await else { break };
+            hash = ghostdag.selected_parent;
+        }
+        if votes.is_empty() && relay_header.pruning_point == pruning_point {
+            votes.insert(relay_header.service_state_hash, 1);
+        }
+        if votes.is_empty() {
+            return Err(ProtocolError::Other("no validated header anchors the negotiated pruning point"));
+        }
+        Ok(votes)
+    }
     /// Downloads the sealed service-bond state (every finality-flushed row up to the new pruning
-    /// point) and verifies its MuHash against `service_state_hash` of the already-validated relay
-    /// header before importing. No-op below the H6 gate.
+    /// point) and verifies its MuHash against the commitment the chain's headers carry for it
+    /// before importing. No-op below the H6 gate.
     async fn sync_service_state(
         &mut self,
         consensus: &ConsensusProxy,
@@ -897,20 +926,9 @@ impl IbdFlow {
         if self.protocol_version < 10 {
             return Err(ProtocolError::Other("peer cannot serve the service-state handoff window â€” sync from an upgraded peer"));
         }
-        // The expected commitment lives in headers whose own pruning point is the one we synced:
-        // the relay header on the fresh-sync path, the local headers-selected-tip on the
-        // recovery path (where the pruning point is the local one, not the syncer's).
-        let expected = if relay_header.pruning_point == pruning_point {
-            relay_header.service_state_hash
-        } else {
-            let hst = consensus.async_get_headers_selected_tip().await;
-            let hst_header = consensus.async_get_header(hst).await?;
-            if hst_header.pruning_point != pruning_point {
-                return Err(ProtocolError::Other("no validated header anchors the negotiated pruning point"));
-            }
-            hst_header.service_state_hash
-        };
-
+        let votes = self.service_commitment_votes(consensus, pruning_point, relay_header).await?;
+        let majority = votes.iter().max_by_key(|(commitment, count)| (**count, **commitment)).map(|(c, _)| *c).unwrap();
+        let checkpoint = self.ctx.config.service_state_checkpoint.filter(|(daa, _)| *daa <= pp_daa);
         let mut recovery = if crate::ibd_v2::enabled_from_env() {
             Some(
                 ServiceStateRecovery::open(self.ctx.ibd_v2_state_dir(), self.ctx.config.genesis.hash, pruning_point)
@@ -1080,6 +1098,8 @@ impl IbdFlow {
         let finalize_started = metrics_enabled().then(Instant::now);
         let mut acc = MuHash::new();
         let mut prefix_rows = 0usize;
+        let mut checkpoint_rows = 0usize;
+        let mut checkpoint_acc = MuHash::new();
         for row in &rows {
             let daa = service_row_daa(row).ok_or(ProtocolError::Other("malformed service-state row"))?;
             if daa > handoff_cutoff {
@@ -1088,6 +1108,10 @@ impl IbdFlow {
             if daa <= pp_daa {
                 acc.add_element(row);
                 prefix_rows += 1;
+                if checkpoint.is_some_and(|(cp_daa, _)| daa <= cp_daa) {
+                    checkpoint_acc.add_element(row);
+                    checkpoint_rows += 1;
+                }
             }
         }
         // Mirror `commitment_at` exactly: no rows seals nothing, and the expected value is then
@@ -1096,10 +1120,26 @@ impl IbdFlow {
         if let Some(finalize_started) = finalize_started {
             metrics.record_validation_time(finalize_started.elapsed());
         }
-        if computed != expected {
+        // With a checkpoint, the rows up to it must reproduce it and the whole set must match a
+        // commitment the chain carries (any voted value, or the checkpoint itself when the
+        // pruning point sits exactly on it); without one, the majority commitment decides.
+        let accepted = match checkpoint {
+            Some((cp_daa, cp_hash)) => {
+                let at_checkpoint = if checkpoint_rows == 0 { Hash::default() } else { checkpoint_acc.finalize() };
+                if at_checkpoint != cp_hash {
+                    return Err(ProtocolError::OtherOwned(format!(
+                        "service-state verification failed: peer rows up to daa {} hash to {}, checkpoint is {}",
+                        cp_daa, at_checkpoint, cp_hash
+                    )));
+                }
+                pp_daa == cp_daa || votes.contains_key(&computed)
+            }
+            None => computed == majority,
+        };
+        if !accepted {
             return Err(ProtocolError::OtherOwned(format!(
                 "service-state verification failed: peer rows hash to {}, header commits {}",
-                computed, expected
+                computed, majority
             )));
         }
 
@@ -1410,28 +1450,27 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             self.router
                 .enqueue(make_message!(
                     Payload::RequestBlockBodies,
-                    RequestBlockBodiesMessage { hashes: chunk.iter().map(|h| h.into()).collect() }
+                    RequestBlockBodiesMessage {
+                        hashes: chunk.iter().map(|h| h.into()).collect(),
+                        // This path discards proofs unconditionally (below), so ask for none.
+                        pom_proof_min_daa: Some(u64::MAX),
+                    }
                 ))
                 .await?;
             let mut jobs = Vec::with_capacity(chunk.len());
 
             for &hash in chunk.iter() {
                 let msg = dequeue_with_timeout!(self.incoming_route, Payload::BlockBody)?;
+                // Header first: compact v11 proofs derive their seed/tree shape from it.
+                // TODO (relaxed): make header queries in a batch.
+                let blk_header = consensus.async_get_header(hash).await.map_err(|err| {
+                    ProtocolError::OtherOwned(format!("syncee inconsistency: missing block header for {}, err: {}", hash, err))
+                })?;
                 let pom_tier = msg.pom_tier.map(|tier| tier as u8);
-                let pom_proof = msg
-                    .pom_proof
-                    .as_deref()
-                    .map(PomProof::from_wire_bytes)
-                    .transpose()
+                let pom_proof = decode_pom_proof(&blk_header, msg.pom_proof.clone(), msg.pom_proof_deduped.clone())
                     .map_err(|_| ProtocolError::OtherOwned(format!("invalid pom_proof for trusted block {}", hash)))?
                     .map(Arc::new);
                 let blk_body: BlockBody = msg.try_into()?;
-                // TODO (relaxed): make header queries in a batch.
-                let blk_header = consensus.async_get_header(hash).await.map_err(|err| {
-                    // Conceptually this indicates local inconsistency, since we received the expected hashes via a local
-                    // get_missing_block_body_hashes call. However for now we fail gracefully and only disconnect from this peer.
-                    ProtocolError::OtherOwned(format!("syncee inconsistency: missing block header for {}, err: {}", hash, err))
-                })?;
                 if blk_body.is_empty() {
                     return Err(ProtocolError::OtherOwned(format!("sent empty block body for block {}", hash)));
                 }
@@ -1463,7 +1502,11 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             self.router
                 .enqueue(make_message!(
                     Payload::RequestIbdBlocks,
-                    RequestIbdBlocksMessage { hashes: chunk.iter().map(|h| h.into()).collect() }
+                    RequestIbdBlocksMessage {
+                        hashes: chunk.iter().map(|h| h.into()).collect(),
+                        // This path discards proofs unconditionally (below), so ask for none.
+                        pom_proof_min_daa: Some(u64::MAX),
+                    }
                 ))
                 .await?;
             let mut jobs = Vec::with_capacity(chunk.len());
@@ -1616,7 +1659,11 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
         self.router
             .enqueue(make_message!(
                 Payload::RequestIbdBlocks,
-                RequestIbdBlocksMessage { hashes: chunk.iter().map(|h| h.into()).collect() }
+                RequestIbdBlocksMessage {
+                    hashes: chunk.iter().map(|h| h.into()).collect(),
+                    // State our local proof retention policy at the source.
+                    pom_proof_min_daa: Some(high_daa.saturating_sub(POM_PROOF_SERVE_DEPTH_DAA)),
+                }
             ))
             .await?;
         for &expected_hash in chunk {
@@ -1670,7 +1717,11 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
         self.router
             .enqueue(make_request!(
                 Payload::RequestBlockBodies,
-                RequestBlockBodiesMessage { hashes: chunk.iter().map(|h| h.into()).collect() },
+                RequestBlockBodiesMessage {
+                    hashes: chunk.iter().map(|h| h.into()).collect(),
+                    // State our local proof retention policy at the source.
+                    pom_proof_min_daa: Some(high_daa.saturating_sub(POM_PROOF_SERVE_DEPTH_DAA)),
+                },
                 self.incoming_route.id()
             ))
             .await?;
@@ -1680,8 +1731,11 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             if let Some(wait_started) = wait_started {
                 pom.peer_wait_time = pom.peer_wait_time.saturating_add(wait_started.elapsed());
             }
-            let proof_bytes =
-                if metrics_enabled() { msg.pom_proof.as_deref().map(|proof| proof.len() as u64).unwrap_or(0) } else { 0 };
+            let proof_bytes = if metrics_enabled() {
+                msg.pom_proof.as_ref().or(msg.pom_proof_deduped.as_ref()).map(|proof| proof.len() as u64).unwrap_or(0)
+            } else {
+                0
+            };
             if proof_bytes > 0 {
                 pom.proofs = pom.proofs.saturating_add(1);
                 pom.proof_bytes = pom.proof_bytes.saturating_add(proof_bytes);
@@ -1692,22 +1746,17 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             // and rejected with "PoM possession proof missing").
             let pom_tier = msg.pom_tier.map(|t| t as u8);
             let decode_started = metrics_enabled().then(Instant::now);
-            let pom_proof = msg
-                .pom_proof
-                .as_deref()
-                .map(PomProof::from_wire_bytes)
-                .transpose()
+            // Header first: compact v11 proofs derive their seed/tree shape from it.
+            // TODO (relaxed): make header queries in a batch.
+            let blk_header = consensus.async_get_header(expected_hash).await.map_err(|err| {
+                ProtocolError::OtherOwned(format!("syncee inconsistency: missing block header for {}, err: {}", expected_hash, err))
+            })?;
+            let pom_proof = decode_pom_proof(&blk_header, msg.pom_proof.clone(), msg.pom_proof_deduped.clone())
                 .map_err(|_| ProtocolError::OtherOwned(format!("invalid pom_proof for block {}", expected_hash)))?
                 .map(Arc::new);
             if let Some(decode_started) = decode_started {
                 pom.decode_time = pom.decode_time.saturating_add(decode_started.elapsed());
             }
-            // TODO (relaxed): make header queries in a batch.
-            let blk_header = consensus.async_get_header(expected_hash).await.map_err(|err| {
-                // Conceptually this indicates local inconsistency, since we received the expected hashes via a local
-                // get_missing_block_body_hashes call. However for now we fail gracefully and only disconnect from this peer.
-                ProtocolError::OtherOwned(format!("syncee inconsistency: missing block header for {}, err: {}", expected_hash, err))
-            })?;
             let blk_body: BlockBody = msg.try_into()?;
             if blk_body.is_empty() {
                 return Err(ProtocolError::OtherOwned(format!("sent empty block body for block {}", expected_hash)));
