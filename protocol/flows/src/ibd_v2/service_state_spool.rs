@@ -74,6 +74,12 @@ pub struct ServiceStateSpool {
     truncated_tail_on_open: bool,
 }
 
+struct ScanResult {
+    metadata: ServiceStateResumeMetadata,
+    rows: Option<Vec<Vec<u8>>>,
+    truncated: bool,
+}
+
 impl ServiceStateSpool {
     /// Opens or creates a spool and reconstructs its durable cursor by scanning
     /// every complete record. A torn final record is truncated back to the last
@@ -83,7 +89,7 @@ impl ServiceStateSpool {
         let parent = path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
         fs::create_dir_all(parent)?;
 
-        let mut file = OpenOptions::new().read(true).write(true).create(true).open(&path)?;
+        let mut file = OpenOptions::new().read(true).write(true).create(true).truncate(false).open(&path)?;
         if file.metadata()?.len() == 0 {
             write_header(&mut file, genesis_hash, pruning_point)?;
             sync_parent_directory(parent)?;
@@ -91,10 +97,17 @@ impl ServiceStateSpool {
             validate_header(&mut file, genesis_hash, pruning_point)?;
         }
 
-        let (metadata, _, truncated_tail_on_open) = scan_records(&mut file, pruning_point, true, false)?;
+        let scan = scan_records(&mut file, pruning_point, true, false)?;
         file.seek(SeekFrom::End(0))?;
 
-        Ok(Self { path, file, genesis_hash, pruning_point, metadata, truncated_tail_on_open })
+        Ok(Self {
+            path,
+            file,
+            genesis_hash,
+            pruning_point,
+            metadata: scan.metadata,
+            truncated_tail_on_open: scan.truncated,
+        })
     }
 
     pub fn path(&self) -> &Path {
@@ -175,12 +188,12 @@ impl ServiceStateSpool {
     /// Re-reads and verifies every durable record, returning the canonical row
     /// stream that may be MuHash-verified and imported after transfer completion.
     pub fn read_all_rows(&mut self) -> Result<Vec<Vec<u8>>, ServiceStateSpoolError> {
-        let (metadata, rows, truncated) = scan_records(&mut self.file, self.pruning_point, false, true)?;
-        if truncated || metadata != self.metadata {
+        let scan = scan_records(&mut self.file, self.pruning_point, false, true)?;
+        if scan.truncated || scan.metadata != self.metadata {
             return Err(ServiceStateSpoolError::MetadataMismatch);
         }
         self.file.seek(SeekFrom::End(0))?;
-        Ok(rows.expect("rows are collected when requested"))
+        Ok(scan.rows.expect("rows are collected when requested"))
     }
 }
 
@@ -237,7 +250,7 @@ fn scan_records(
     pruning_point: Hash,
     repair_truncated_tail: bool,
     collect_rows: bool,
-) -> Result<(ServiceStateResumeMetadata, Option<Vec<Vec<u8>>>, bool), ServiceStateSpoolError> {
+) -> Result<ScanResult, ServiceStateSpoolError> {
     let file_len = file.metadata()?.len();
     let mut offset = HEADER_LEN as u64;
     let mut metadata = ServiceStateResumeMetadata::new(pruning_point);
@@ -307,7 +320,7 @@ fn scan_records(
         offset = offset.checked_add(record_len).ok_or(ServiceStateSpoolError::CursorOverflow)?;
     }
 
-    Ok((metadata, collected, truncated))
+    Ok(ScanResult { metadata, rows: collected, truncated })
 }
 
 fn truncate_tail(file: &mut File, offset: u64, allowed: bool) -> Result<(), ServiceStateSpoolError> {
@@ -433,6 +446,7 @@ mod tests {
         assert_eq!(reopened.metadata().next_cursor, 3);
         assert_eq!(reopened.metadata().chunk_count, 2);
         assert_eq!(reopened.read_all_rows().unwrap(), vec![b"row-a".to_vec(), b"row-b".to_vec(), b"row-c".to_vec()]);
+        drop(reopened);
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
