@@ -14,16 +14,42 @@ if ($flow.Contains($oldMerge)) {
     throw 'PomChunkMetrics::merge signature not found'
 }
 
-# Rewrite only the generated aggregation block in the candidate script. Everything else remains
-# exactly the same as the reviewed Phase 4 patch/certification logic.
+# Rewrite only the generated aggregation/progress details in the candidate script. Everything else
+# remains exactly the same as the reviewed Phase 4 patch/certification logic.
 $sourcePath = 'scripts/ibd-v2/phase4/apply-body-search-batching-v156.ps1'
 $source = [IO.File]::ReadAllText((Resolve-Path $sourcePath))
+
 $pattern = '(?s)\s+pom_totals\.merge\(PomChunkMetrics \{.*?\}\);'
 $matches = [regex]::Matches($source, $pattern)
 if ($matches.Count -ne 1) {
     throw "expected exactly one generated PomChunkMetrics move block, found $($matches.Count)"
 }
 $source = [regex]::Replace($source, $pattern, "`n                pom_totals.merge(&current.pom);", 1)
+
+# ProgressReporter::report_completion consumes self, so take it out of the Option instead of
+# attempting to move through a mutable reference.
+$oldCompletion = @'
+        progress_reporter
+            .as_mut()
+            .expect("reporter exists once a missing body was queued")
+            .report_completion(prev_chunk_len);
+'@
+$newCompletion = @'
+        progress_reporter
+            .take()
+            .expect("reporter exists once a missing body was queued")
+            .report_completion(prev_chunk_len);
+'@
+if (-not $source.Contains($oldCompletion)) { throw 'generated progress completion block not found' }
+$source = $source.Replace($oldCompletion, $newCompletion)
+
+# antipast_hashes_between uses mergeset granularity. Keep the requested window strictly above the
+# configured mergeset size limit, matching the existing ConsensusApi safety rule.
+$oldLimit = '        let max_blocks = max_blocks.max(self.mergeset_size_limit as usize);'
+$newLimit = '        let max_blocks = max_blocks.max((self.mergeset_size_limit as usize).saturating_add(1));'
+if (-not $source.Contains($oldLimit)) { throw 'generated mergeset limit normalization not found' }
+$source = $source.Replace($oldLimit, $newLimit)
+
 $temp = Join-Path $env:RUNNER_TEMP 'apply-body-search-batching-v156-fixed.ps1'
 [IO.File]::WriteAllText($temp, $source, $utf8NoBom)
 
