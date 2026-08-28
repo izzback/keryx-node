@@ -1,0 +1,115 @@
+name: Keryx IBD v2 Phase 3 Windows
+
+# IBD v2 policy: Phase 3 certification runs only on the dedicated local Windows runner.
+# Never replace this with a GitHub-hosted image.
+
+on:
+  push:
+    branches:
+      - ibd-v2-phase3-persistent-state
+    paths:
+      - '.github/workflows/ibd-v2-phase3-windows.yml'
+      - 'protocol/flows/src/ibd/**'
+      - 'protocol/flows/src/ibd_v2/**'
+      - 'protocol/flows/src/v7/request_service_state.rs'
+      - 'protocol/flows/src/lib.rs'
+      - 'protocol/flows/Cargo.toml'
+      - 'protocol/p2p/proto/**'
+      - 'protocol/p2p/src/convert/messages.rs'
+      - 'docs/ibd-v2/**'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ibd-v2-phase3-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  phase3:
+    name: Phase 3 persistence and recovery gate
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 60
+    defaults:
+      run:
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File {0}
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install protoc 29.6
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $protocVersion = '29.6'
+          $archive = Join-Path $env:RUNNER_TEMP "protoc-$protocVersion-win64.zip"
+          $installDir = Join-Path $env:RUNNER_TEMP "protoc-$protocVersion"
+          $url = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/protoc-$protocVersion-win64.zip"
+
+          if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
+          Expand-Archive -LiteralPath $archive -DestinationPath $installDir -Force
+
+          $protocBin = Join-Path $installDir 'bin'
+          $protocExe = Join-Path $protocBin 'protoc.exe'
+          if (-not (Test-Path $protocExe)) { throw "protoc.exe was not found: $protocExe" }
+
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::AppendAllText($env:GITHUB_PATH, "$protocBin`r`n", $utf8NoBom)
+          & $protocExe --version
+          if ($LASTEXITCODE -ne 0) { throw "protoc version check failed with exit code $LASTEXITCODE" }
+
+      - name: Install Rust 1.93.0 natively
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rustRoot = Join-Path $env:RUNNER_TEMP 'rust-1.93.0-phase3'
+          $cargoHome = Join-Path $rustRoot 'cargo'
+          $rustupHome = Join-Path $rustRoot 'rustup'
+          $rustupInit = Join-Path $env:RUNNER_TEMP 'rustup-init-phase3.exe'
+          $rustupUrl = 'https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe'
+
+          New-Item -ItemType Directory -Path $rustRoot -Force | Out-Null
+          Invoke-WebRequest -Uri $rustupUrl -OutFile $rustupInit -UseBasicParsing
+          $env:CARGO_HOME = $cargoHome
+          $env:RUSTUP_HOME = $rustupHome
+
+          & $rustupInit -y --no-modify-path --profile minimal --default-host x86_64-pc-windows-msvc --default-toolchain 1.93.0
+          if ($LASTEXITCODE -ne 0) { throw "rustup-init failed with exit code $LASTEXITCODE" }
+
+          $cargoBin = Join-Path $cargoHome 'bin'
+          $rustupExe = Join-Path $cargoBin 'rustup.exe'
+          & $rustupExe component add rustfmt clippy --toolchain 1.93.0-x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw "rustup component install failed with exit code $LASTEXITCODE" }
+
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [System.IO.File]::AppendAllText($env:GITHUB_ENV, "CARGO_HOME=$cargoHome`r`nRUSTUP_HOME=$rustupHome`r`n", $utf8NoBom)
+          [System.IO.File]::AppendAllText($env:GITHUB_PATH, "$cargoBin`r`n", $utf8NoBom)
+          & (Join-Path $cargoBin 'rustc.exe') --version --verbose
+          & (Join-Path $cargoBin 'cargo.exe') --version
+
+      - name: Check formatting of IBD v2 touch points
+        run: |
+          $files = @(
+            'protocol/flows/src/ibd_v2/*.rs',
+            'protocol/flows/src/ibd/flow.rs',
+            'protocol/flows/src/ibd/progress.rs',
+            'protocol/flows/src/ibd/streams.rs',
+            'protocol/flows/src/v7/request_service_state.rs',
+            'protocol/p2p/src/convert/messages.rs'
+          )
+          rustfmt --edition 2024 --check $files
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Check P2P wire crate
+        run: cargo check -p keryx-p2p-lib --all-targets
+
+      - name: Check P2P flows crate
+        run: cargo check -p keryx-p2p-flows --all-targets
+
+      - name: Clippy P2P flows crate
+        run: cargo clippy -p keryx-p2p-flows --all-targets --no-deps -- -D warnings -A clippy::collapsible_if
+
+      - name: Test P2P flows crate
+        run: cargo test -p keryx-p2p-flows
