@@ -2,184 +2,471 @@
 
 Updated: 2026-08-28
 
-## Fixed baseline
+> This document follows the canonical project order. The current technical branch keeps its historical name `ibd-v2-phase3-persistent-state`, but that branch name does not redefine roadmap phase numbering.
 
-- Official frozen base: Keryx v1.5.5
-- Official base commit: `bb408d54ca3992f7f9f4e269507f7603c234d24d`
-- Immutable base branch: `ibd-v2-base-v1.5.5`
-- Validated integration branch: `ibd-v2-integrate-v1.5.5`
-- Active Phase 3 branch: `ibd-v2-phase3-persistent-state`
-- Canonical RUN A baseline: 95.17 minutes on the baseline host
-- IBD v2 remains disabled by default and opt-in with `KERYX_IBD_V2=1`
-- Certification policy: local runner only, `[self-hosted, Windows, X64]`
+## Status legend
 
-## Phase 0 — Reproducible baseline — COMPLETE
+⬜ Planned
+🟨 In progress
+🧪 In testing
+✅ Validated
+⛔ Blocked
 
-- [x] Freeze official v1.5.5 source baseline.
-- [x] Integrate IBD v2 history without modifying immutable reference branches.
-- [x] Validate upstream-sensitive PoM, SIMD, AArch64/NEON, storage, database and keryxd compatibility.
-- [x] Produce and validate canonical Windows RUN A collector.
-- [x] Run a clean default-parameter mainnet baseline.
-- [x] Freeze baseline report and metrics.
-- [x] Identify peer wait as the dominant PoM/body-sync performance bottleneck.
+---
 
-No performance tuning is allowed to redefine this baseline.
+# Objective
 
-## Phase 3 — Persistent IBD state and crash recovery — ACTIVE / ADVANCED
+Improve Keryx Initial Block Download so that a new node can synchronize:
 
-### 3A. Durable checkpoint foundation — COMPLETE / CI CERTIFIED
+- faster
+- with lower RAM pressure
+- with fewer unnecessary database reads
+- without restarting large downloads after disconnection
+- without depending on a trusted central server
+- without requiring inbound ports
+- while preserving full local verification
 
-- [x] Versioned checkpoint format with magic/version/length/checksum.
-- [x] Atomic checkpoint replacement.
-- [x] Network/genesis binding.
-- [x] Pruning-point binding.
-- [x] Independent stage states: Headers, Pruning, UTXO, Service State, PoM, Bodies.
-- [x] Checkpoint progress can never be trusted as consensus/database truth by itself.
-- [x] Reject truncated checkpoints.
-- [x] Reject corrupted/checksum-invalid checkpoints.
-- [x] Reject unsupported versions.
-- [x] Reject checkpoints from another genesis/network.
-- [x] Reject stale pruning-point checkpoints.
-- [x] Reject semantically invalid stage sets/progress.
-- [x] Reject short/truncated headers.
+Fundamental principle:
 
-### 3B. Service State durable recovery — IMPLEMENTED / CI CERTIFIED / LIVE TEST PENDING
+Transport may come from anyone.
+Validation must always remain local.
 
-- [x] Durable Service State spool.
-- [x] Fsync-before-checkpoint ordering.
-- [x] Cursor + previous-row fingerprint resume anchor.
-- [x] Recovery reconciles a lagging checkpoint from durable spool data.
-- [x] Verified state replays locally without network redownload.
-- [x] Service State import uses atomic RocksDB batch semantics.
-- [x] Committed state is not replayed unnecessarily.
-- [x] Deterministic fault points:
+Active frozen comparison base: Keryx v1.5.5, commit `bb408d54ca3992f7f9f4e269507f7603c234d24d`.
+Canonical RUN A baseline: **95.17 minutes**.
+
+---
+
+# Phase 0 — IBD instrumentation
+
+Overall status: 🟨 Very advanced
+
+✅ Add detailed metrics for the main IBD stages
+✅ Measure header download throughput
+✅ Measure body download throughput
+✅ Measure PoM proof throughput
+✅ Measure UTXO download throughput
+✅ Measure Service State throughput
+✅ Measure network bandwidth usage
+🟨 Measure validation CPU time with sufficiently fine granularity
+⬜ Measure direct RocksDB read/write latency per IBD operation
+✅ Measure peer wait / idle time
+✅ Measure time spent in the main IBD stages
+
+Target metrics:
+
+- headers/sec
+- blocks/sec
+- PoM proofs/sec
+- UTXOs/sec
+- Service State rows/sec
+- MB/sec
+- validation CPU time per block
+- RocksDB latency
+- peer idle time
+- total IBD duration
+
+Important RUN A result: PoM/body sync is heavily constrained by peer wait.
+
+Objective:
+
+Identify the real bottlenecks before modifying protocol behavior.
+
+No consensus modification.
+
+---
+
+# Phase 1 — Resumable Service State synchronization
+
+Overall status: 🧪 Implemented and CI-certified, real mainnet testing pending
+
+✅ Add chunk identifiers / cursors
+✅ Add durable temporary Service State storage
+✅ Persist download progress
+✅ Persist the current cursor
+✅ Persist verification progress (`DOWNLOADING` / `VERIFIED` / `COMMITTED`)
+🧪 Resume after node crash
+🧪 Resume after node update
+🧪 Resume after peer disconnect
+🧪 Resume from another peer
+✅ Verify the final Service State commitment
+✅ Atomically commit verified state through RocksDB WriteBatch
+
+Already certified implementation:
+
+- durable spool
+- fsync before checkpoint advancement
+- cursor + previous-row fingerprint
+- local replay from `VERIFIED`
+- no network redownload needed for `VERIFIED` replay
+- fault points:
   - `service-state-after-spool-fsync`
   - `service-state-after-checkpoint`
   - `service-state-after-verified`
   - `service-state-after-import`
-- [ ] Execute the real mainnet crash/restart matrix and archive evidence.
 
-### 3C. UTXO durable recovery — IMPLEMENTED / CI CERTIFIED / LIVE TEST PENDING
+Still requiring mainnet validation: real crash/restart matrix, peer change and network-disconnect recovery.
 
-- [x] Persist UTXO lifecycle: NotStarted -> Downloading -> Verified -> Committed.
-- [x] Preserve durable partial pruning UTXO RocksDB state after crash.
-- [x] Reconstruct durable UTXO count and MuHash from RocksDB on restart.
-- [x] Reconcile checkpoint progress from RocksDB instead of trusting metadata ahead of storage.
-- [x] Resume peers that cannot seek by draining the resent prefix to the exact durable anchor.
-- [x] Validate anchor value before accepting the remaining suffix.
-- [x] Final commitment still cryptographically verifies the reconstructed prefix + new suffix.
-- [x] Verified UTXO state can replay final import locally without downloading the snapshot again.
-- [x] Final pruning-point import is covered by a double-import idempotence regression test.
-- [x] Service State is armed before UTXO stability is exposed.
-- [x] Deterministic fault points:
+Objective:
+
+Never restart a large Service State download from zero unless the pruning point itself becomes invalid.
+
+No change to consensus validity rules.
+
+---
+
+# Phase 2 — Resumable UTXO state synchronization
+
+Overall status: 🧪 Implemented and CI-certified, real mainnet testing pending
+
+🟨 Add deterministic cursors for UTXO chunks
+
+Compatibility note: the first implementation uses a deterministic anchor on the last durable outpoint because current v1.5.5 peers cannot seek directly into the UTXO stream. A non-seeking peer resends the prefix, which is verified/drained to the durable anchor. A true network cursor can be added later without losing backward compatibility.
+
+✅ Use temporary/durable UTXO storage
+
+Implementation note: the existing pruning UTXO RocksDB is reused instead of creating a redundant second database.
+
+✅ Persist completed chunks with an atomic WriteBatch per chunk
+✅ Persist progress metadata
+🧪 Resume after restart
+🧪 Resume after network interruption
+🧪 Resume from another peer
+✅ Verify the complete UTXO commitment by reconstructing MuHash
+🧪 Transition to verified/committed UTXO state with safe recovery around the boundary
+
+Already certified implementation:
+
+- reconstruct durable prefix from RocksDB
+- reconstruct MuHash after restart
+- skip already durable network prefix
+- append only missing suffix
+- local replay after `VERIFIED`
+- final double import tested as idempotent
+- fault points:
   - `utxo-after-clear`
   - `utxo-after-checkpoint`
   - `utxo-after-chunk-commit`
   - `utxo-after-verified`
   - `utxo-after-import`
   - `utxo-after-committed`
-- [ ] Execute the real mainnet crash/restart matrix and archive evidence.
 
-### 3D. Final certified real-test package — COMPLETE
+Objective:
 
-Permanent local Windows gate: `33182774771` — GREEN.
+Avoid unnecessarily redownloading multiple gigabytes of state.
 
-Certified package head:
+---
 
-`5bb59c04a0fb7c62d870475220822c88a08c93e8`
+# Phase 3 — Independent IBD stage tracking
 
-Functional UTXO final-gap commit contained by that head:
+Overall status: 🟨 In progress
 
-`d921b29d108cf5d3cb7d4f53addbe81fd0502345`
+🟨 Track Headers independently
+🟨 Track Pruning independently
+✅ Track UTXO independently
+✅ Track Service State independently
+🟨 Track PoM independently
+🟨 Track Bodies independently
 
-Artifact:
+Implemented checkpoint states:
 
-`keryx-ibd-v2-phase3-realtest-5bb59c04a0fb7c62d870475220822c88a08c93e8`
+NOT_STARTED
+DOWNLOADING
+VERIFIED
+COMMITTED
 
-Artifact ZIP SHA-256:
+The durable checkpoint format is already:
 
-`e1533479c26f62228fb9bc4fd156f47c412be5909db109fc3ad1628c86e13a7b`
+- versioned
+- protected by a cryptographic checksum
+- bound to network/genesis
+- bound to pruning point
+- atomically replaced
+- able to reject corruption, truncation, unsupported versions and stale checkpoints
 
-`keryxd.exe` SHA-256:
+UTXO and Service State already use these states for real recovery logic.
+Headers, Pruning, PoM and Bodies still need equivalent effective wiring before Phase 3 can be considered ✅.
 
-`2e17fb843758b65aea6df53edffa779c8ac57e1e8861903315f59077d7fbd752`
+Objective:
 
-The ZIP digest was independently matched against the GitHub artifact digest and the executable digest was independently matched against the internal build manifest.
+Make IBD recoverable instead of treating synchronization as one large all-or-nothing operation.
 
-### 3E. PoM and block-body durable recovery boundaries — NEXT OFFLINE DEVELOPMENT PRIORITY
+---
 
-Current state: the checkpoint schema already contains independent `Pom` and `Bodies` stages, and the legacy IBD path already reconstructs missing bodies from consensus. However, Phase 3 does not yet provide the same explicit durable recovery coordinator and crash-boundary certification for PoM/body progress as it now does for UTXO and Service State.
+# Phase 4 — Database batching and validation
 
-Required work before Phase 3 can be declared complete:
+Overall status: 🟨 Next offline development priority
 
-- [ ] Define the minimal durable PoM/body checkpoint semantics.
-- [ ] Never checkpoint a PoM/body unit before the corresponding consensus/database state is durable.
-- [ ] Persist a safe body-sync target only when it can be reconstructed from local consensus after restart.
-- [ ] Recompute remaining missing bodies from consensus rather than trusting a persisted list.
-- [ ] Define whether PoM progress needs a separate durable cursor or can be derived entirely from durable block/proof state.
-- [ ] Add deterministic hard-crash fault points around the selected durable boundaries.
-- [ ] Add unit/integration tests proving restart never skips non-durable body/proof work.
-- [ ] Add those tests to the permanent local Windows Phase 3 gate.
+⬜ Batch header lookups
+⬜ Batch block-status lookups
+⬜ Batch missing-body queries
+⬜ Use RocksDB `multi_get` where appropriate
+⬜ Reduce repeated async consensus calls
+⬜ Pipeline network download and validation
+⬜ Pipeline validation and database writes
+⬜ Dynamically adjust IBD batch sizes
+⬜ Add queue backpressure
 
-### 3F. Real Phase 3 crash/restart campaign — BLOCKED ONLY BY NODE AVAILABILITY
+Completed precursor work:
 
-When the test nodes can run again:
+✅ Service State import grouped into one atomic RocksDB WriteBatch
+✅ UTXO writes grouped into one atomic WriteBatch per chunk
 
-1. Stop every unrelated `keryxd` process.
-2. Use only dedicated Phase 3 datadirs; never touch the historical node datadir.
-3. Execute Service State crash points.
-4. Execute UTXO crash points.
-5. Reuse a cold-cloned Verified UTXO state for `utxo-after-import` and `utxo-after-committed` so the large UTXO set does not need to be downloaded repeatedly.
-6. Execute PoM/body crash points after 3E is implemented.
-7. Archive logs, checkpoint state, hashes, restart behavior and final sync outcome for every test.
-8. Phase 3 is GREEN only if every crash resumes without silent data loss, invalid trust advancement, ambiguous final state, or unnecessary full restart.
+These are safe foundations but do not replace the Phase 4 tasks above.
 
-## Phase 1 — Scheduler and adaptive budgets — LOCKED UNTIL PHASE 3 GREEN
+Objective:
 
-After Phase 3:
+Reduce random database access and limit CPU/network idle periods.
 
-- [ ] Stage-aware scheduler.
-- [ ] Adaptive in-flight work budgets.
-- [ ] Backpressure based on validation/storage pressure.
-- [ ] Preserve bounded memory use.
-- [ ] Keep consensus verification unchanged.
-- [ ] Measure CPU, RAM, disk, network and peer-wait utilization.
+No consensus modification.
 
-No multi-peer racing yet unless separately reviewed.
+---
 
-## Phase 2 — Throughput and download improvements — LOCKED UNTIL PHASE 1 SAFE
+# Phase 5 — PoM-compatible IBD
 
-- [ ] Reduce PoM/body peer-wait time identified by RUN A.
-- [ ] Pipeline network receipt and local validation more aggressively where safe.
-- [ ] Improve batching without moving durability boundaries ahead of storage.
-- [ ] Evaluate peer capability discovery.
-- [ ] Only then evaluate multi-peer/chunk scheduling.
-- [ ] HTTP mirrors/alternate transports remain optional future transports and never trust anchors.
+Overall status: ⬜ Planned
 
-## Final comparative benchmark
+⬜ Detect whether a peer can provide historical PoM proofs
+⬜ Track the oldest available PoM DAA per peer
+⬜ Track PoM proof retention depth
+⬜ Avoid selecting incapable peers for historical IBD
+⬜ Retry missing PoM proofs without rejecting otherwise valid bodies
+⬜ Request PoM proofs independently from bodies
+⬜ Persist downloaded PoM-proof progress
+✅ Add historical PoM transfer/verification metrics
 
-Repeat the canonical RUN A methodology with IBD v2 enabled:
+Objective:
 
-- Fresh empty datadir.
-- Default comparable node settings.
-- Same host and measurement methodology where practical.
-- 5-second resource sampling.
-- Stage metrics enabled.
-- Record total sync time, phase durations, CPU/RAM/disk/network use, peer wait, throughput, stalls and restart overhead.
-- Compare against frozen RUN A = 95.17 minutes.
+A peer that has the blockchain tip must not automatically be assumed capable of supplying all historical PoM data required by IBD.
 
-## Release gates
+---
 
-IBD v2 must remain opt-in until all of the following are GREEN:
+# Phase 6 — Peer capability discovery
 
-- [ ] Phase 3 real crash/restart evidence.
-- [ ] PoM/body durable recovery boundaries.
-- [ ] Scheduler safety.
-- [ ] Throughput implementation correctness.
-- [ ] Comparative benchmark.
-- [ ] Upstream compatibility gate after final rebase/update.
-- [ ] No consensus validity or serialization divergence.
+Overall status: ⬜ Planned
 
-## Non-negotiable architecture rule
+⬜ Extend peer capability information
+⬜ Advertise header availability
+⬜ Advertise body availability
+⬜ Advertise UTXO/state availability
+⬜ Advertise Service State availability
+⬜ Advertise PoM proof availability
+⬜ Advertise retention depth
+⬜ Advertise oldest available PoM DAA
+⬜ Advertise supported IBD protocol version
+⬜ Advertise maximum supported chunk size
 
-The remote source is never trusted. Every peer, future mirror or alternate transport only supplies bytes. Keryx locally verifies cryptographic commitments, consensus rules and durable state before committing progress.
+Objective:
+
+Do not waste IBD time discovering too late that a peer cannot serve requested data.
+
+---
+
+# Phase 7 — Multi-peer IBD scheduler
+
+Overall status: ⬜ Planned
+
+⬜ Allow several peers to participate in one IBD session
+⬜ Separate IBD resources by data type
+⬜ Dynamically assign chunks
+⬜ Measure peer bandwidth
+⬜ Measure peer latency
+⬜ Measure peer reliability
+⬜ Reassign chunks on timeout
+⬜ Reassign chunks after disconnect
+⬜ Penalize consistently unreliable peers
+⬜ Do not globally ban peers for simple IBD capability limitations
+
+Objective:
+
+A slow or incomplete peer must no longer determine the speed of the entire IBD.
+
+---
+
+# Phase 8 — Content-addressed state chunks
+
+Overall status: ⬜ Planned
+
+⬜ Define canonical chunk serialization
+⬜ Hash each chunk
+⬜ Bind chunks to a pruning point
+⬜ Bind chunks to a global state commitment
+⬜ Detect duplicate chunks
+⬜ Allow chunks from different providers
+⬜ Verify chunks before permanent acceptance
+⬜ Cache locally verified chunks
+
+Objective:
+
+Provider identity becomes secondary. Only cryptographic content matters.
+
+---
+
+# Phase 9 — Fast state distribution
+
+Overall status: ⬜ Planned
+
+⬜ Keep P2P as the primary transport
+⬜ Allow multiple state providers
+⬜ Allow community mirrors
+⬜ Allow pool-operated mirrors
+⬜ Allow exchange-operated mirrors
+⬜ Optional HTTPS transport
+⬜ Optional CDN transport
+⬜ Same content regardless of transport
+⬜ Same cryptographic verification regardless of source
+
+Objective:
+
+HTTP/HTTPS may improve availability and throughput but must never become a trust requirement.
+
+---
+
+# Phase 10 — NAT / CGNAT-compatible IBD
+
+Overall status: ⬜ Planned
+
+⬜ Require only outbound connections for standard nodes
+⬜ Do not require port forwarding to synchronize
+⬜ Keep inbound P2P optional
+⬜ Optional UPnP support
+⬜ Optional NAT-PMP support
+⬜ Optional PCP support
+⬜ P2P fallback across multiple outbound peers
+⬜ HTTPS/443 fallback when P2P is blocked
+
+Mandatory objective:
+
+A new user behind CGNAT with zero inbound ports must be able to start `keryxd`, discover peers, download state, verify everything locally and reach `SYNCED`.
+
+---
+
+# Phase 11 — Recovery and adversarial testing
+
+Overall status: 🟨 Partially prepared, real campaign pending
+
+⬜ Disconnect a peer during header synchronization
+🧪 Disconnect/kill during UTXO synchronization
+🧪 Disconnect/kill during Service State synchronization
+⬜ Disconnect a peer during PoM synchronization
+🟨 Kill the node process during every IBD stage
+🧪 Restart after partial UTXO/Service State download
+🧪 Change provider during UTXO/Service State recovery
+⬜ Send an invalid state chunk
+⬜ Send a corrupted PoM proof
+⬜ Send duplicate chunks
+⬜ Send chunks in the wrong order
+⬜ Peer advertises data it does not actually possess
+⬜ Peer becomes extremely slow
+✅ Reject checkpoints for a stale pruning point
+⬜ Multiple peers send contradictory data
+⬜ All optional mirrors unavailable
+⬜ P2P-only synchronization remains functional
+
+UTXO and Service State fault points are already implemented and locally CI-certified. Their mainnet validation remains pending while test nodes are unavailable.
+
+Objective:
+
+IBD must fail cleanly and resume efficiently.
+
+---
+
+# Phase 12 — Performance validation
+
+Overall status: 🟨 Baseline available, IBD v2 comparison not yet executed
+
+The original roadmap referred to Keryx v1.5.4 as the baseline. The project later froze the active comparison baseline on **Keryx v1.5.5**, commit `bb408d54ca3992f7f9f4e269507f7603c234d24d`, to remain aligned with current upstream compatibility.
+
+✅ Establish canonical baseline: RUN A v1.5.5 = 95.17 min
+⬜ Compare IBD v2 against baseline
+⬜ Test on HDD
+⬜ Test on SATA SSD
+✅ Test baseline on NVMe
+⬜ Test with low RAM
+✅ Test baseline with high RAM
+⬜ Test with slow Internet
+⬜ Test with high latency
+⬜ Test with packet loss
+🟨 Test with one peer
+⬜ Test with multiple peers in the Phase 7 scheduler sense
+⬜ Test a CGNAT / outbound-only node
+
+Measure:
+
+- total IBD duration
+- network traffic
+- peak RAM
+- CPU usage
+- disk I/O
+- recovery time after restart
+- amount of unnecessarily downloaded data
+- peer utilization
+
+---
+
+# Phase 13 — Protocol deployment
+
+Overall status: ⬜ Planned
+
+⬜ Define a Keryx IBD protocol version
+⬜ Maintain compatibility with old peers
+⬜ Negotiate capabilities during handshake
+⬜ Activate IBD v2 only if both peers support it
+⬜ Automatically fall back to legacy IBD
+⬜ Test mixed networks
+⬜ Test gradual deployment
+⬜ Document operator requirements
+
+Target:
+
+New node + New peer → IBD v2
+
+New node + Old peer → legacy IBD
+
+Old node + New peer → legacy IBD
+
+No forced network-wide update is required for the first deployment.
+
+---
+
+# Security principles
+
+✅ No trusted blockchain snapshot
+
+✅ No mandatory central server
+
+✅ No mandatory Keryx Labs endpoint
+
+✅ No mandatory pool endpoint
+
+✅ No DNS seed as a trust source
+
+✅ No inbound port required by the final design
+
+✅ Every state commitment verified locally
+
+✅ Every block verified locally
+
+✅ Every PoM proof verified locally
+
+✅ Transport source never determines validity
+
+---
+
+# Mandatory implementation order
+
+1. Phase 0 — Instrumentation
+2. Phase 1 — Resumable Service State
+3. Phase 2 — Resumable UTXO
+4. Phase 3 — Independent IBD stage tracking
+5. Phase 4 — Database batching
+6. Phase 5 — PoM-compatible IBD
+7. Phase 6 — Peer capabilities
+8. Phase 7 — Multi-peer scheduler
+9. Phase 8 — Content-addressed chunks
+10. Phase 9 — Fast state distribution
+11. Phase 10 — NAT / CGNAT support
+12. Phase 11 — Adversarial testing
+13. Phase 12 — Performance validation
+14. Phase 13 — Progressive protocol deployment
+
+**Working rule: do not renumber, merge or advance a phase out of this order without an explicit project decision.**
