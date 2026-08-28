@@ -5,13 +5,13 @@ use keryx_consensus_core::{
         utxo_view::UtxoView,
     },
 };
-use serde::Deserialize;
 use keryx_database::prelude::DB;
 use keryx_database::prelude::StoreResultExt;
 use keryx_database::prelude::{BatchDbWriter, CachedDbAccess, DirectDbWriter};
 use keryx_database::prelude::{CachePolicy, StoreError};
 use keryx_hashes::Hash;
 use rocksdb::WriteBatch;
+use serde::Deserialize;
 use std::{collections::HashMap, error::Error, fmt::Display, sync::Arc};
 
 type UtxoCollectionIterator<'a> = Box<dyn Iterator<Item = Result<(TransactionOutpoint, UtxoEntry), Box<dyn Error>>> + 'a>;
@@ -218,8 +218,15 @@ impl UtxoSetStore for DbUtxoSetStore {
     }
 
     fn write_many(&mut self, utxos: &[(TransactionOutpoint, UtxoEntry)]) -> Result<(), StoreError> {
-        let mut writer = DirectDbWriter::new(&self.db);
-        self.access.write_many(&mut writer, &mut utxos.iter().map(|(o, e)| ((*o).into(), Arc::new(e.clone()))))?;
+        // Imported IBD chunks must be all-or-nothing. DirectDbWriter performs one RocksDB
+        // put per key, so a hard process loss can otherwise leave half a network chunk on
+        // disk. A single WriteBatch gives recovery a clean durable-prefix boundary.
+        let mut batch = WriteBatch::default();
+        {
+            let mut writer = BatchDbWriter::new(&mut batch);
+            self.access.write_many(&mut writer, &mut utxos.iter().map(|(o, e)| ((*o).into(), Arc::new(e.clone()))))?;
+        }
+        self.db.write(batch)?;
         Ok(())
     }
 }

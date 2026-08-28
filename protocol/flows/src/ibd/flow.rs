@@ -6,6 +6,7 @@ use crate::{
         metrics::{StageMetrics, metrics_enabled},
         service_state::ServiceStateWireTracker,
         service_state_recovery::ServiceStateRecovery,
+        utxo_recovery::UtxoRecovery,
     },
 };
 use futures::future::{Either, join_all, select, try_join_all};
@@ -16,10 +17,11 @@ use keryx_consensus_core::{
     block::Block,
     config::params::POM_PROOF_SERVE_DEPTH_DAA,
     header::Header,
+    muhash::MuHashExtensions,
     pom::PomProof,
     pruning::{PruningPointProof, PruningPointsList, PruningProofMetadata},
     trusted::TrustedBlock,
-    tx::Transaction,
+    tx::{Transaction, TransactionOutpoint, UtxoEntry},
 };
 use keryx_consensusmanager::{ConsensusProxy, StagingConsensus, spawn_blocking};
 use keryx_core::{debug, info, time::unix_now, warn};
@@ -732,12 +734,42 @@ impl IbdFlow {
         pruning_point: Hash,
         relay_header: &Header,
     ) -> Result<(), ProtocolError> {
-        // A better solution could be to create a copy of the old utxo state for some sort of fallback rather than delete it.
-        consensus.async_clear_pruning_utxo_set().await; // this deletes the old pruning utxoset and also sets the pruning utxo as invalidated
-        self.sync_pruning_point_utxoset(consensus, pruning_point).await?;
-        // Arm Service State recovery before marking UTXO stable. This closes the crash window
-        // where a restart could otherwise skip Service State because the UTXO stage already
-        // looked complete.
+        let mut recovery = if crate::ibd_v2::enabled_from_env() {
+            Some(
+                UtxoRecovery::open(self.ctx.ibd_v2_state_dir(), self.ctx.config.genesis.hash, pruning_point)
+                    .map_err(|err| ProtocolError::OtherOwned(format!("failed to open IBD v2 UTXO recovery: {err}")))?,
+            )
+        } else {
+            None
+        };
+
+        let already_committed = recovery.as_ref().is_some_and(UtxoRecovery::is_committed);
+        if already_committed {
+            info!("IBD v2 UTXO set for pruning point {} is already committed; skipping network replay", pruning_point);
+        } else {
+            let preserve_partial = recovery.as_ref().is_some_and(UtxoRecovery::should_preserve_partial_db);
+            if preserve_partial {
+                info!("IBD v2 preserving partial pruning UTXO RocksDB state for {}", pruning_point);
+            } else {
+                // Fresh target (or legacy IBD): first invalidate/clear the old pruning UTXO set.
+                // If a process dies during the clear, the checkpoint is still NotStarted and the
+                // next boot safely repeats the idempotent clear before any partial DB is trusted.
+                consensus.async_clear_pruning_utxo_set().await;
+                crate::ibd_v2::fault_injection::crash_if_requested("utxo-after-clear");
+                if let Some(recovery) = &mut recovery {
+                    recovery
+                        .mark_downloading(0)
+                        .map_err(|err| ProtocolError::OtherOwned(format!("failed to arm IBD v2 UTXO recovery: {err}")))?;
+                    crate::ibd_v2::fault_injection::crash_if_requested("utxo-after-checkpoint");
+                }
+            }
+
+            self.sync_pruning_point_utxoset(consensus, pruning_point, recovery.as_mut()).await?;
+        }
+
+        // Arm Service State before exposing the UTXO stage as stable. A crash after UTXO commit
+        // but before this point therefore re-enters sync_new_utxo_set, observes the committed
+        // UTXO checkpoint, skips the network, and arms Service State before setting stability.
         if crate::ibd_v2::enabled_from_env() {
             let pp_daa = consensus.async_get_header(pruning_point).await?.daa_score;
             if keryx_consensus_core::pom::service_commit_active(pp_daa) {
@@ -747,7 +779,6 @@ impl IbdFlow {
                 );
             }
         }
-        // Only if the UTXO import has reached here will the UTXO stage be considered final.
         consensus.async_set_pruning_utxoset_stable().await;
         self.sync_service_state(consensus, pruning_point, relay_header).await?;
         // Once a new utxoset is stored, the utxoindex needs to be resynced as well. This happens through the reset handler mechanism.
@@ -756,7 +787,6 @@ impl IbdFlow {
         self.ctx.on_pruning_point_utxoset_override();
         Ok(())
     }
-
     /// Downloads the sealed service-bond state (every finality-flushed row up to the new pruning
     /// point) and verifies its MuHash against `service_state_hash` of the already-validated relay
     /// header before importing. No-op below the H6 gate.
@@ -1088,53 +1118,176 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
         }
     }
 
-    async fn sync_pruning_point_utxoset(&mut self, consensus: &ConsensusProxy, pruning_point: Hash) -> Result<(), ProtocolError> {
-        info!("downloading the pruning point utxoset, this can take a little while.");
-        self.router
-            .enqueue(make_message!(
-                Payload::RequestPruningPointUtxoSet,
-                RequestPruningPointUtxoSetMessage { pruning_point_hash: Some(pruning_point.into()) }
-            ))
-            .await?;
-        let mut chunk_stream = PruningPointUtxosetChunkStream::new(&self.router, &mut self.incoming_route);
+    async fn rebuild_durable_pruning_utxo_state(
+        &self,
+        consensus: &ConsensusProxy,
+        pruning_point: Hash,
+    ) -> Result<(MuHash, u64, Option<(TransactionOutpoint, UtxoEntry)>), ProtocolError> {
+        const SCAN_CHUNK: usize = 50_000;
+        let coin_age_activation = self.ctx.config.params.coin_age_activation;
         let mut multiset = MuHash::new();
-        let processing_started = metrics_enabled().then(Instant::now);
-        let mut processing_chunks = 0u64;
-        let mut processing_utxos = 0u64;
-        let mut append_time = Duration::ZERO;
-        while let Some(chunk) = chunk_stream.next().await? {
-            if metrics_enabled() {
-                processing_chunks = processing_chunks.saturating_add(1);
-                processing_utxos = processing_utxos.saturating_add(chunk.len() as u64);
+        let mut items = 0u64;
+        let mut from_outpoint = None;
+        let mut skip_first = false;
+        let mut last = None;
+
+        loop {
+            let chunk = consensus.async_get_pruning_point_utxos(pruning_point, from_outpoint, SCAN_CHUNK, skip_first).await?;
+            if chunk.is_empty() {
+                break;
             }
-            let append_started = metrics_enabled().then(Instant::now);
-            multiset = consensus
-                .clone()
-                .spawn_blocking(move |c| {
-                    c.append_imported_pruning_point_utxos(&chunk, &mut multiset);
-                    multiset
-                })
-                .await;
-            if let Some(append_started) = append_started {
-                append_time = append_time.saturating_add(append_started.elapsed());
+
+            for (outpoint, entry) in &chunk {
+                let element = MuHash::from_utxo(outpoint, entry, coin_age_activation);
+                multiset.combine(&element);
             }
+            items = items.saturating_add(chunk.len() as u64);
+            last = chunk.last().cloned();
+            from_outpoint = last.as_ref().map(|(outpoint, _)| *outpoint);
+            skip_first = true;
         }
+
+        Ok((multiset, items, last))
+    }
+
+    async fn sync_pruning_point_utxoset(
+        &mut self,
+        consensus: &ConsensusProxy,
+        pruning_point: Hash,
+        mut recovery: Option<&mut UtxoRecovery>,
+    ) -> Result<(), ProtocolError> {
+        info!("downloading the pruning point utxoset, this can take a little while.");
+
+        let verified_replay = recovery.as_deref().is_some_and(UtxoRecovery::is_verified);
+        let preserve_partial = recovery.as_deref().is_some_and(UtxoRecovery::should_preserve_partial_db);
+        let (mut multiset, mut durable_items, durable_anchor) = if preserve_partial {
+            let rebuilt = self.rebuild_durable_pruning_utxo_state(consensus, pruning_point).await?;
+            info!(
+                "IBD v2 reconstructed {} durable pruning UTXOs from RocksDB{}",
+                rebuilt.1,
+                if verified_replay { " for verified local replay" } else { " before network resume" }
+            );
+            if let Some(recovery) = recovery.as_mut() {
+                if verified_replay {
+                    recovery
+                        .validate_verified_items(rebuilt.1)
+                        .map_err(|err| ProtocolError::OtherOwned(format!("invalid verified IBD v2 UTXO recovery state: {err}")))?;
+                } else {
+                    recovery
+                        .reconcile_downloading(rebuilt.1)
+                        .map_err(|err| ProtocolError::OtherOwned(format!("failed to reconcile IBD v2 UTXO checkpoint: {err}")))?;
+                }
+            }
+            rebuilt
+        } else {
+            (MuHash::new(), 0, None)
+        };
+
+        let reused_utxos = durable_items;
+        let processing_started = metrics_enabled().then(Instant::now);
+        let mut network_chunks = 0u64;
+        let mut network_utxos = 0u64;
+        let mut appended_utxos = 0u64;
+        let mut append_time = Duration::ZERO;
+
+        if !verified_replay {
+            self.router
+                .enqueue(make_message!(
+                    Payload::RequestPruningPointUtxoSet,
+                    RequestPruningPointUtxoSetMessage { pruning_point_hash: Some(pruning_point.into()) }
+                ))
+                .await?;
+            let mut chunk_stream = PruningPointUtxosetChunkStream::new(&self.router, &mut self.incoming_route);
+            let mut anchor_seen = durable_anchor.is_none();
+
+            while let Some(mut chunk) = chunk_stream.next().await? {
+                network_chunks = network_chunks.saturating_add(1);
+                network_utxos = network_utxos.saturating_add(chunk.len() as u64);
+
+                // Peers v1.5.5 cannot start the UTXO stream at an arbitrary cursor. During a
+                // recovery they therefore resend the prefix. Drain it without touching RocksDB
+                // until we encounter the exact last durable outpoint. The final commitment check
+                // still cryptographically validates the union of old durable prefix + new suffix.
+                if !anchor_seen {
+                    let (anchor_outpoint, anchor_entry) = durable_anchor.as_ref().expect("anchor exists when not yet seen");
+                    if let Some(position) = chunk.iter().position(|(outpoint, _)| outpoint == anchor_outpoint) {
+                        if &chunk[position].1 != anchor_entry {
+                            return Err(ProtocolError::Other("IBD v2 UTXO resume anchor value differs from durable RocksDB entry"));
+                        }
+                        anchor_seen = true;
+                        chunk.drain(..=position);
+                    } else {
+                        continue;
+                    }
+                }
+
+                if chunk.is_empty() {
+                    continue;
+                }
+
+                let appended = chunk.len() as u64;
+                let append_started = metrics_enabled().then(Instant::now);
+                multiset = consensus
+                    .clone()
+                    .spawn_blocking(move |c| {
+                        c.append_imported_pruning_point_utxos(&chunk, &mut multiset);
+                        multiset
+                    })
+                    .await;
+                if let Some(append_started) = append_started {
+                    append_time = append_time.saturating_add(append_started.elapsed());
+                }
+
+                // write_many() is a single RocksDB WriteBatch in IBD v2, so this point is a
+                // complete durable-prefix boundary even under std::process::abort().
+                durable_items = durable_items.saturating_add(appended);
+                appended_utxos = appended_utxos.saturating_add(appended);
+                crate::ibd_v2::fault_injection::crash_if_requested("utxo-after-chunk-commit");
+                if let Some(recovery) = recovery.as_mut() {
+                    recovery
+                        .reconcile_downloading(durable_items)
+                        .map_err(|err| ProtocolError::OtherOwned(format!("failed to checkpoint IBD v2 UTXO progress: {err}")))?;
+                }
+            }
+
+            if !anchor_seen {
+                return Err(ProtocolError::Other("peer UTXO stream ended before the durable IBD v2 resume anchor"));
+            }
+
+            if let Some(recovery) = recovery.as_mut() {
+                recovery
+                    .mark_verified(durable_items)
+                    .map_err(|err| ProtocolError::OtherOwned(format!("failed to checkpoint verified IBD v2 UTXO set: {err}")))?;
+            }
+            crate::ibd_v2::fault_injection::crash_if_requested("utxo-after-verified");
+        }
+
         let import_started = metrics_enabled().then(Instant::now);
         consensus.clone().spawn_blocking(move |c| c.import_pruning_point_utxo_set(pruning_point, multiset)).await?;
         let import_time = import_started.map(|started| started.elapsed()).unwrap_or(Duration::ZERO);
+        crate::ibd_v2::fault_injection::crash_if_requested("utxo-after-import");
+
+        if let Some(recovery) = recovery.as_mut() {
+            recovery
+                .mark_committed(durable_items)
+                .map_err(|err| ProtocolError::OtherOwned(format!("failed to commit IBD v2 UTXO checkpoint: {err}")))?;
+        }
+
         if metrics_enabled() {
             let elapsed = processing_started.expect("metrics start is present when metrics are enabled").elapsed();
             let elapsed_seconds = elapsed.as_secs_f64();
             let processing_time = append_time.saturating_add(import_time);
             let processing_ratio =
                 if elapsed_seconds == 0.0 { 0.0 } else { (processing_time.as_secs_f64() / elapsed_seconds).clamp(0.0, 1.0) };
-            let utxos_per_second = if elapsed_seconds == 0.0 { 0.0 } else { processing_utxos as f64 / elapsed_seconds };
-            let average_append_ms =
-                if processing_chunks == 0 { 0.0 } else { append_time.as_secs_f64() * 1000.0 / processing_chunks as f64 };
+            let utxos_per_second = if elapsed_seconds == 0.0 { 0.0 } else { appended_utxos as f64 / elapsed_seconds };
+            let average_append_ms = if network_chunks == 0 { 0.0 } else { append_time.as_secs_f64() * 1000.0 / network_chunks as f64 };
             info!(
-                "IBD-V2-METRICS: stage=utxo-processing complete=true chunks={} utxos={} elapsed={:.3}s rate={:.2} utxos/s append={:.3}s avg_append={:.3}ms/chunk final_import={:.3}s processing_pct={:.1}%",
-                processing_chunks,
-                processing_utxos,
+                "IBD-V2-METRICS: stage=utxo-processing complete=true chunks={} utxos={} reused={} network_received={} appended={} elapsed={:.3}s rate={:.2} appended_utxos/s append={:.3}s avg_append={:.3}ms/network-chunk final_import={:.3}s processing_pct={:.1}%",
+                network_chunks,
+                durable_items,
+                reused_utxos,
+                network_utxos,
+                appended_utxos,
                 elapsed_seconds,
                 utxos_per_second,
                 append_time.as_secs_f64(),

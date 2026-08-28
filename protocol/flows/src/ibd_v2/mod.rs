@@ -12,6 +12,7 @@ pub mod service_state;
 pub mod service_state_recovery;
 pub mod service_state_spool;
 pub mod state;
+pub mod utxo_recovery;
 
 /// Runtime opt-in used while IBD v2 is experimental.
 pub const ENABLE_ENV: &str = "KERYX_IBD_V2";

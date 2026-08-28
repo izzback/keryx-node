@@ -46,7 +46,10 @@ impl ServiceStateRecovery {
         let mut recovery = Self::open(root, genesis_hash, pruning_point)?;
         let mut dirty = false;
 
-        let utxo = StageProgress::new(Stage::Utxo).with_status(StageStatus::Committed).with_progress(1, Some(1));
+        let durable_utxos =
+            recovery.checkpoint.stage(Stage::Utxo).map(|stage| stage.completed_units).filter(|count| *count > 0).unwrap_or(1);
+        let utxo =
+            StageProgress::new(Stage::Utxo).with_status(StageStatus::Committed).with_progress(durable_utxos, Some(durable_utxos));
         if recovery.checkpoint.stage(Stage::Utxo) != Some(&utxo) {
             recovery.checkpoint.set_stage(utxo);
             dirty = true;
