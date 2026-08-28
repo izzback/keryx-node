@@ -1,0 +1,37 @@
+name: Keryx IBD v2 UTXO Accelerate
+
+on:
+  push:
+    branches:
+      - ibd-v2-phase3-persistent-state
+    paths:
+      - '.github/dev/APPLY-IBD-V2-UTXO-RECOVERY.ps1'
+      - '.github/workflows/ibd-v2-utxo-accelerate.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ibd-v2-utxo-accelerate-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  utxo:
+    name: Implement and certify UTXO recovery
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 90
+    defaults:
+      run:
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File {0}
+
+    steps:
+      - name: Checkout Phase 3 branch
+        uses: actions/checkout@v4
+        with:
+          ref: ibd-v2-phase3-persistent-state
+          fetch-depth: 0
+          clean: true
+
+      - name: Apply and certify UTXO recovery
+        run: .\.github\dev\APPLY-IBD-V2-UTXO-RECOVERY.ps1
