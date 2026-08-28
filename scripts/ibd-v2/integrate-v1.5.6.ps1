@@ -23,15 +23,35 @@ if ($mergeExit -ne 0) {
     Write-Host "Initial merge conflicts ($($conflicts.Count)):"
     $conflicts | ForEach-Object { Write-Host " - $_" }
 
-    # The certified Phase 3 versions of the two conflicting files already contain
-    # the large IBD recovery changes. Keep those as the starting point and replay
-    # only the much smaller official v1.5.5 -> v1.5.6 delta on top.
     foreach ($path in $conflicts) {
-        Write-Host "Replaying official v1.5.6 delta on certified IBD file: $path"
+        Write-Host "Resolving v1.5.6 overlap: $path"
         git checkout --ours -- $path
         if ($LASTEXITCODE -ne 0) { throw "failed to select certified IBD side for $path" }
-        git add -- $path
 
+        if ($path -eq 'consensus/src/pipeline/virtual_processor/tests.rs') {
+            # The only official 1.5.6 delta in this file is a new reward-routing
+            # regression test appended at EOF. Preserve our Phase 3 UTXO replay test
+            # and append the exact upstream test body.
+            $current = [IO.File]::ReadAllText((Resolve-Path $path))
+            $marker = '#[tokio::test]' + "`n" + 'async fn reward_mint_window_is_the_same_off_the_committed_chain()'
+            if (-not $current.Contains('reward_mint_window_is_the_same_off_the_committed_chain')) {
+                $upstreamLines = @(git show "${upstream156}:$path")
+                if ($LASTEXITCODE -ne 0) { throw 'failed to read upstream v1.5.6 tests.rs' }
+                $upstreamText = [string]::Join("`n", $upstreamLines) + "`n"
+                $start = $upstreamText.IndexOf($marker)
+                if ($start -lt 0) { throw 'could not locate v1.5.6 reward-routing regression test' }
+                $addition = $upstreamText.Substring($start)
+                if (-not $current.EndsWith("`n")) { $current += "`n" }
+                $current += "`n" + $addition
+                [IO.File]::WriteAllText((Resolve-Path $path), $current, $utf8NoBom)
+            }
+            git add -- $path
+            continue
+        }
+
+        # For ibd/flow.rs, keep the certified recovery implementation as the
+        # starting point and replay only the official v1.5.5 -> v1.5.6 delta.
+        git add -- $path
         $safe = ($path -replace '[^A-Za-z0-9_.-]', '_')
         $patch = Join-Path $env:RUNNER_TEMP "v156-$safe.patch"
         $patchLines = @(git diff --binary $base155 $upstream156 -- $path)
@@ -40,7 +60,7 @@ if ($mergeExit -ne 0) {
             git apply --3way --index $patch
             if ($LASTEXITCODE -ne 0) {
                 Write-Host "V156_PATCH_FAILED_BEGIN $path"
-                Get-Content -LiteralPath $patch | Select-Object -First 240 | ForEach-Object { Write-Host $_ }
+                Get-Content -LiteralPath $patch | Select-Object -First 320 | ForEach-Object { Write-Host $_ }
                 Write-Host "V156_PATCH_FAILED_END $path"
                 throw "official v1.5.6 delta did not apply cleanly to $path"
             }
@@ -49,14 +69,8 @@ if ($mergeExit -ne 0) {
 }
 
 $remaining = @(git diff --name-only --diff-filter=U)
-if ($remaining.Count -gt 0) {
-    Write-Host 'UNRESOLVED_CONFLICTS_BEGIN'
-    foreach ($path in $remaining) { Write-Host " - $path" }
-    Write-Host 'UNRESOLVED_CONFLICTS_END'
-    throw "v1.5.6 integration still has $($remaining.Count) unresolved file(s)"
-}
+if ($remaining.Count -gt 0) { throw "v1.5.6 integration still has unresolved files: $($remaining -join ', ')" }
 
-# Compatibility guards. The proto schema uses camelCase field names.
 $pom = Get-Content -Raw 'consensus/core/src/pom_v4.rs'
 if ($pom -notmatch '#\[target_feature\(enable = "neon"\)\]\s*unsafe fn half') {
     throw 'IBD v2 AArch64/NEON compatibility hook was lost during v1.5.6 integration'
@@ -76,14 +90,11 @@ $flow = Get-Content -Raw 'protocol/flows/src/ibd/flow.rs'
 if ($flow -notmatch 'ServiceStateRecovery' -or $flow -notmatch 'UtxoRecovery' -or $flow -notmatch 'IbdStageTracker') {
     throw 'IBD v2 recovery/stage tracking hooks were lost during v1.5.6 integration'
 }
-
 $tests = Get-Content -Raw 'consensus/src/pipeline/virtual_processor/tests.rs'
-if ($tests -notmatch 'pruning_point_utxo_import_replay_is_idempotent') {
-    throw 'IBD v2 UTXO replay regression test was lost during v1.5.6 integration'
+if ($tests -notmatch 'pruning_point_utxo_import_replay_is_idempotent' -or $tests -notmatch 'reward_mint_window_is_the_same_off_the_committed_chain') {
+    throw 'required Phase 3/v1.5.6 virtual processor regression tests are missing'
 }
 
-# Update only the active development reference; RUN A remains the historical
-# v1.5.5 comparison baseline until a new canonical baseline is frozen.
 $roadmapPath = 'docs/ibd-v2/ROADMAP.md'
 if (Test-Path $roadmapPath) {
     $roadmap = Get-Content -Raw $roadmapPath
@@ -92,12 +103,10 @@ if (Test-Path $roadmapPath) {
         'Active upstream development base: Keryx v1.5.6, commit `a8e23793363c509325881f6146176f39bf52f77f`. Canonical performance comparison remains RUN A v1.5.5 until a new baseline is explicitly frozen.'
     )
     [IO.File]::WriteAllText((Resolve-Path $roadmapPath), $roadmap, $utf8NoBom)
-    git add -- $roadmapPath
 }
 
 git add -A
 if ($LASTEXITCODE -ne 0) { throw 'git add failed' }
-
 $unmerged = @(git diff --cached --name-only --diff-filter=U)
 if ($unmerged.Count -gt 0) { throw "unmerged files remain: $($unmerged -join ', ')" }
 
@@ -123,7 +132,6 @@ if ($LASTEXITCODE -ne 0) { throw 'release build failed' }
 
 git commit -m 'chore(ibd-v2): integrate official Keryx v1.5.6'
 if ($LASTEXITCODE -ne 0) { throw 'merge commit failed' }
-
 $sha = (git rev-parse HEAD).Trim()
 Write-Host "Integrated v1.5.6 HEAD: $sha"
 git push origin HEAD:$targetBranch
