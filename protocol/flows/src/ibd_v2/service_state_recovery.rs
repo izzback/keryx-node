@@ -113,11 +113,15 @@ impl ServiceStateRecovery {
         }
 
         let metadata = self.spool.append_chunk(start_cursor, next_cursor, rows)?;
+        // The spool fsync is the durability boundary. A crash here must recover
+        // by reconciling a lagging checkpoint from the durable spool.
+        super::fault_injection::crash_if_requested("service-state-after-spool-fsync");
         self.checkpoint.service_state = Some(metadata);
         self.checkpoint.set_stage(
             StageProgress::new(Stage::ServiceState).with_status(StageStatus::Downloading).with_progress(metadata.row_count, None),
         );
         self.persist()?;
+        super::fault_injection::crash_if_requested("service-state-after-checkpoint");
         Ok(metadata)
     }
 

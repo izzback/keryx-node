@@ -7,9 +7,10 @@
 use std::{fmt, sync::Arc};
 
 use keryx_consensus_core::collateral::StrikeEntry;
-use keryx_database::prelude::{CachedDbAccess, CachePolicy, DirectDbWriter, StoreError, DB};
+use keryx_database::prelude::{BatchDbWriter, CachePolicy, CachedDbAccess, DB, DirectDbWriter, StoreError};
 use keryx_database::registry::DatabaseStorePrefixes;
 use keryx_hashes::Hash;
+use rocksdb::WriteBatch;
 
 /// `event daa (8 bytes BE) || miner identity (32 bytes)` — big-endian daa first, so RocksDB
 /// iteration order is event order.
@@ -56,6 +57,10 @@ impl DbServiceStrikeStore {
 
     pub fn set(&self, daa: u64, miner: Hash, record: StrikeEntry) -> Result<(), StoreError> {
         self.access.write(DirectDbWriter::new(&self.db), StrikeLogKey::new(daa, miner), record)
+    }
+
+    pub fn set_batch(&self, batch: &mut WriteBatch, daa: u64, miner: Hash, record: StrikeEntry) -> Result<(), StoreError> {
+        self.access.write(BatchDbWriter::new(batch), StrikeLogKey::new(daa, miner), record)
     }
 
     /// The whole log in event order, for the boot load and the refold baseline.

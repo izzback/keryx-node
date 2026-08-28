@@ -3,8 +3,9 @@
 /// rebuild the RAM burned-set consulted by transaction validation.
 use std::sync::Arc;
 
-use keryx_database::prelude::{CachedDbAccess, CachePolicy, DirectDbWriter, StoreError, DB};
+use keryx_database::prelude::{BatchDbWriter, CachePolicy, CachedDbAccess, DB, DirectDbWriter, StoreError};
 use keryx_database::registry::DatabaseStorePrefixes;
+use rocksdb::WriteBatch;
 
 use super::ai_slash::OutpointKey;
 
@@ -21,6 +22,10 @@ impl DbServiceBurnStore {
 
     pub fn set(&self, key: OutpointKey, miss_daa: u64) -> Result<(), StoreError> {
         self.access.write(DirectDbWriter::new(&self.db), key, miss_daa)
+    }
+
+    pub fn set_batch(&self, batch: &mut WriteBatch, key: OutpointKey, miss_daa: u64) -> Result<(), StoreError> {
+        self.access.write(BatchDbWriter::new(batch), key, miss_daa)
     }
 
     /// All burned outpoints with their miss daa, for the boot load.

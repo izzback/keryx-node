@@ -987,11 +987,13 @@ impl IbdFlow {
                 .mark_verified()
                 .map_err(|err| ProtocolError::OtherOwned(format!("failed to checkpoint verified IBD v2 service state: {err}")))?;
         }
+        crate::ibd_v2::fault_injection::crash_if_requested("service-state-after-verified");
 
         let total_rows = rows.len();
         let handoff_rows = total_rows - prefix_rows;
         let storage_started = metrics_enabled().then(Instant::now);
         consensus.clone().spawn_blocking(move |c| c.import_service_state(rows)).await?;
+        crate::ibd_v2::fault_injection::crash_if_requested("service-state-after-import");
         if let Some(storage_started) = storage_started {
             metrics.record_storage_time(storage_started.elapsed());
         }

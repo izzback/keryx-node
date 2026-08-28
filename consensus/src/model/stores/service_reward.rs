@@ -4,8 +4,9 @@
 use std::{fmt, sync::Arc};
 
 use keryx_consensus_core::collateral::RewardEntry;
-use keryx_database::prelude::{CachePolicy, CachedDbAccess, DB, DirectDbWriter, StoreError};
+use keryx_database::prelude::{BatchDbWriter, CachePolicy, CachedDbAccess, DB, DirectDbWriter, StoreError};
 use keryx_database::registry::DatabaseStorePrefixes;
+use rocksdb::WriteBatch;
 
 #[derive(Eq, Hash, PartialEq, Debug, Copy, Clone)]
 pub struct RewardKey(pub [u8; 32]);
@@ -35,6 +36,10 @@ impl DbServiceRewardStore {
 
     pub fn set(&self, key: RewardKey, entry: RewardEntry) -> Result<(), StoreError> {
         self.access.write(DirectDbWriter::new(&self.db), key, entry)
+    }
+
+    pub fn set_batch(&self, batch: &mut WriteBatch, key: RewardKey, entry: RewardEntry) -> Result<(), StoreError> {
+        self.access.write(BatchDbWriter::new(batch), key, entry)
     }
 
     /// All reward rows, for the boot load.

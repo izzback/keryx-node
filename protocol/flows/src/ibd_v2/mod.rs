@@ -6,6 +6,7 @@
 
 pub mod checkpoint;
 pub mod compat;
+pub mod fault_injection;
 pub mod metrics;
 pub mod service_state;
 pub mod service_state_recovery;

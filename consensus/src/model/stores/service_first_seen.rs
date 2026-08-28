@@ -3,9 +3,10 @@
 /// The standing/probation clock reads it at a lagged anchor (`SERVICE_STANDING_LAG_DAA`).
 use std::sync::Arc;
 
-use keryx_database::prelude::{CachedDbAccess, CachePolicy, DirectDbWriter, StoreError, DB};
+use keryx_database::prelude::{BatchDbWriter, CachePolicy, CachedDbAccess, DB, DirectDbWriter, StoreError};
 use keryx_database::registry::DatabaseStorePrefixes;
 use keryx_hashes::Hash;
+use rocksdb::WriteBatch;
 
 #[derive(Clone)]
 pub struct DbServiceFirstSeenStore {
@@ -20,6 +21,10 @@ impl DbServiceFirstSeenStore {
 
     pub fn set(&self, miner: Hash, daa: u64) -> Result<(), StoreError> {
         self.access.write(DirectDbWriter::new(&self.db), miner, daa)
+    }
+
+    pub fn set_batch(&self, batch: &mut WriteBatch, miner: Hash, daa: u64) -> Result<(), StoreError> {
+        self.access.write(BatchDbWriter::new(batch), miner, daa)
     }
 
     /// All sightings, for the boot load and the refold baseline.
