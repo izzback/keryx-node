@@ -5,7 +5,7 @@ on:
     branches:
       - ibd-v2-phase3-persistent-state
     paths:
-      - '.github/dev/APPLY-IBD-V2-UTXO-RECOVERY.ps1'
+      - '.github/dev/APPLY-IBD-V2-FINAL-RECOVERY-GAPS.ps1'
       - '.github/workflows/ibd-v2-utxo-accelerate.yml'
   workflow_dispatch:
 
@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  utxo:
-    name: Implement and certify UTXO recovery
+  final-gaps:
+    name: Certify final UTXO recovery gaps
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 90
     defaults:
@@ -33,27 +33,5 @@ jobs:
           fetch-depth: 0
           clean: true
 
-      - name: Bootstrap accelerator compatibility fixes
-        run: |
-          $path = '.github\dev\APPLY-IBD-V2-UTXO-RECOVERY.ps1'
-          $text = [IO.File]::ReadAllText((Resolve-Path $path))
-          $text = $text.Replace('in $Path: $StartMarker', 'in ${Path}: $StartMarker')
-          $text = $text.Replace('in $Path: $EndMarker', 'in ${Path}: $EndMarker')
-          $text = $text.Replace('recovery.as_deref_mut()', 'recovery.as_mut()')
-
-          # The permanent workflow is updated separately through the GitHub connector.
-          # The Actions token deliberately does not have the `workflows` permission, so
-          # never let the candidate commit include a workflow-file mutation.
-          $gateStartMarker = '# Include the now-touched UTXO store in the permanent local rustfmt gate.'
-          $formatMarker = "Write-Host 'Formatting UTXO recovery candidate...'"
-          $gateStart = $text.IndexOf($gateStartMarker, [StringComparison]::Ordinal)
-          if ($gateStart -ge 0) {
-            $formatStart = $text.IndexOf($formatMarker, $gateStart, [StringComparison]::Ordinal)
-            if ($formatStart -lt 0) { throw 'Unable to isolate the accelerator workflow patch block' }
-            $text = $text.Substring(0, $gateStart) + "# Permanent Phase 3 workflow maintained separately.`r`n`r`n" + $text.Substring($formatStart)
-          }
-          $text = $text.Replace(' scripts/ibd-v2/phase3/RESUME-UTXO-CRASH-TEST.ps1 .github/workflows/ibd-v2-phase3-windows.yml', ' scripts/ibd-v2/phase3/RESUME-UTXO-CRASH-TEST.ps1')
-          [IO.File]::WriteAllText((Resolve-Path $path), $text, (New-Object System.Text.UTF8Encoding($false)))
-
-      - name: Apply and certify UTXO recovery
-        run: .\.github\dev\APPLY-IBD-V2-UTXO-RECOVERY.ps1
+      - name: Apply and certify final recovery gaps
+        run: .\.github\dev\APPLY-IBD-V2-FINAL-RECOVERY-GAPS.ps1
