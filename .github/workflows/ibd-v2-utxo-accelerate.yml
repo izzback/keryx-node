@@ -33,5 +33,13 @@ jobs:
           fetch-depth: 0
           clean: true
 
+      - name: PowerShell 5.1 compatibility fix
+        run: |
+          $path = '.github\dev\APPLY-IBD-V2-UTXO-RECOVERY.ps1'
+          $text = [IO.File]::ReadAllText((Resolve-Path $path))
+          $text = $text.Replace('in $Path: $StartMarker', 'in ${Path}: $StartMarker')
+          $text = $text.Replace('in $Path: $EndMarker', 'in ${Path}: $EndMarker')
+          [IO.File]::WriteAllText((Resolve-Path $path), $text, (New-Object System.Text.UTF8Encoding($false)))
+
       - name: Apply and certify UTXO recovery
         run: .\.github\dev\APPLY-IBD-V2-UTXO-RECOVERY.ps1
