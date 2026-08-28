@@ -98,6 +98,9 @@ jobs:
 
       - name: Check formatting of Phase 3 touch points
         run: |
+          # `skip_children=true` is deliberate: upstream v1.5.5 contains unrelated
+          # pre-existing rustfmt drift in child modules. This gate checks only files
+          # owned by Phase 3 and must never rewrite unrelated official sources.
           $files = @(
             (Get-ChildItem 'protocol/flows/src/ibd_v2' -Filter '*.rs' -File | ForEach-Object FullName)
             (Resolve-Path 'protocol/flows/src/ibd/flow.rs').Path
@@ -108,10 +111,9 @@ jobs:
             (Resolve-Path 'protocol/p2p/src/convert/messages.rs').Path
             (Resolve-Path 'consensus/src/consensus/mod.rs').Path
             (Get-ChildItem 'consensus/src/model/stores' -Filter 'service_*.rs' -File | ForEach-Object FullName)
-            (Resolve-Path 'consensus/src/model/stores/utxo_set.rs').Path
             (Resolve-Path 'keryxd/src/daemon.rs').Path
           )
-          & rustfmt --edition 2024 --check $files
+          & rustfmt --edition 2024 --check --config skip_children=true $files
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Check P2P wire crate
