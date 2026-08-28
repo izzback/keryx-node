@@ -5,6 +5,7 @@ use crate::{
     ibd_v2::{
         metrics::{StageMetrics, metrics_enabled},
         service_state::ServiceStateWireTracker,
+        service_state_recovery::ServiceStateRecovery,
     },
 };
 use futures::future::{Either, join_all, select, try_join_all};
@@ -199,6 +200,12 @@ impl IbdFlow {
                     );
 
                     self.sync_new_utxo_set(&session, pruning_point, &relay_block.header).await?;
+                } else if crate::ibd_v2::enabled_from_env()
+                    && ServiceStateRecovery::has_pending(self.ctx.ibd_v2_state_dir(), self.ctx.config.genesis.hash, pruning_point)
+                        .map_err(|err| ProtocolError::OtherOwned(format!("failed to inspect IBD v2 service-state recovery: {err}")))?
+                {
+                    info!("resuming durable service-state download for pruning point {}", pruning_point);
+                    self.sync_service_state(&session, pruning_point, &relay_block.header).await?;
                 }
                 // Once utxo is valid, simply sync missing headers
                 body_target = self
@@ -728,7 +735,19 @@ impl IbdFlow {
         // A better solution could be to create a copy of the old utxo state for some sort of fallback rather than delete it.
         consensus.async_clear_pruning_utxo_set().await; // this deletes the old pruning utxoset and also sets the pruning utxo as invalidated
         self.sync_pruning_point_utxoset(consensus, pruning_point).await?;
-        // Only if the function has reached here, will the utxo be considered "final"
+        // Arm Service State recovery before marking UTXO stable. This closes the crash window
+        // where a restart could otherwise skip Service State because the UTXO stage already
+        // looked complete.
+        if crate::ibd_v2::enabled_from_env() {
+            let pp_daa = consensus.async_get_header(pruning_point).await?.daa_score;
+            if keryx_consensus_core::pom::service_commit_active(pp_daa) {
+                drop(
+                    ServiceStateRecovery::arm(self.ctx.ibd_v2_state_dir(), self.ctx.config.genesis.hash, pruning_point)
+                        .map_err(|err| ProtocolError::OtherOwned(format!("failed to arm IBD v2 service-state recovery: {err}")))?,
+                );
+            }
+        }
+        // Only if the UTXO import has reached here will the UTXO stage be considered final.
         consensus.async_set_pruning_utxoset_stable().await;
         self.sync_service_state(consensus, pruning_point, relay_header).await?;
         // Once a new utxoset is stored, the utxoindex needs to be resynced as well. This happens through the reset handler mechanism.
@@ -753,9 +772,9 @@ impl IbdFlow {
         }
         // Peers below v10 ship only rows at or below the pruning point: the handoff band above
         // it would be silently missing, and the fold cannot re-derive it (its cohort windows
-        // cross unretained history) — the sync would wedge later instead of failing here.
+        // cross unretained history) â€” the sync would wedge later instead of failing here.
         if self.protocol_version < 10 {
-            return Err(ProtocolError::Other("peer cannot serve the service-state handoff window — sync from an upgraded peer"));
+            return Err(ProtocolError::Other("peer cannot serve the service-state handoff window â€” sync from an upgraded peer"));
         }
         // The expected commitment lives in headers whose own pruning point is the one we synced:
         // the relay header on the fresh-sync path, the local headers-selected-tip on the
@@ -770,83 +789,150 @@ impl IbdFlow {
             }
             hst_header.service_state_hash
         };
-        info!("downloading the sealed service state for pruning point {}", pruning_point);
-        self.router
-            .enqueue(make_message!(
-                Payload::RequestServiceState,
-                RequestServiceStateMessage {
-                    pruning_point_hash: Some(pruning_point.into()),
-                    start_cursor: None,
-                    previous_row_fingerprint: None
-                }
-            ))
-            .await?;
+
+        let mut recovery = if crate::ibd_v2::enabled_from_env() {
+            Some(
+                ServiceStateRecovery::open(self.ctx.ibd_v2_state_dir(), self.ctx.config.genesis.hash, pruning_point)
+                    .map_err(|err| ProtocolError::OtherOwned(format!("failed to open IBD v2 service-state recovery: {err}")))?,
+            )
+        } else {
+            None
+        };
+
+        if recovery.as_ref().is_some_and(ServiceStateRecovery::is_committed) {
+            debug!("IBD v2 service state for pruning point {} is already committed", pruning_point);
+            return Ok(());
+        }
+
+        let verified_replay = recovery.as_ref().is_some_and(ServiceStateRecovery::is_verified);
+        let (start_cursor, previous_row_fingerprint) = match recovery.as_ref() {
+            Some(recovery) => {
+                let metadata = recovery.metadata();
+                (Some(metadata.next_cursor), metadata.last_row_fingerprint.map(Vec::from))
+            }
+            None => (None, None),
+        };
+
+        if !verified_replay {
+            info!(
+                "downloading the sealed service state for pruning point {} from cursor {}",
+                pruning_point,
+                start_cursor.unwrap_or(0)
+            );
+            self.router
+                .enqueue(make_message!(
+                    Payload::RequestServiceState,
+                    RequestServiceStateMessage {
+                        pruning_point_hash: Some(pruning_point.into()),
+                        start_cursor,
+                        previous_row_fingerprint,
+                    }
+                ))
+                .await?;
+        } else {
+            info!("replaying locally verified service-state spool for pruning point {}", pruning_point);
+        }
+
         let handoff_cutoff = pp_daa + keryx_consensus_core::collateral::SERVICE_STATE_HANDOFF_DAA;
         let mut rows: Vec<Vec<u8>> = Vec::new();
-        let mut prefix_rows = 0usize;
-        let mut acc = MuHash::new();
         let mut metrics = StageMetrics::new();
-        let mut resume_tracker = crate::ibd_v2::enabled_from_env().then(|| ServiceStateWireTracker::new(pruning_point));
-        loop {
-            let wait_started = metrics_enabled().then(Instant::now);
-            let received = tokio::time::timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT, self.incoming_route.recv()).await;
-            if let Some(wait_started) = wait_started {
-                metrics.record_peer_wait_time(wait_started.elapsed());
-            }
-            match received {
-                Ok(Some(msg)) => match msg.payload {
-                    Some(Payload::ServiceStateChunk(chunk)) => {
-                        if let Some(tracker) = &mut resume_tracker {
-                            let chunk_pruning_point: Option<Hash> =
-                                chunk.pruning_point_hash.clone().map(TryInto::try_into).transpose()?;
-                            tracker.accept_chunk(chunk_pruning_point, chunk.start_cursor, chunk.next_cursor, &chunk.rows).map_err(
-                                |err| ProtocolError::OtherOwned(format!("invalid IBD v2 service-state chunk metadata: {err:?}")),
-                            )?;
-                        }
-                        if metrics_enabled() {
-                            let chunk_rows = chunk.rows.len() as u64;
-                            let chunk_bytes = chunk.rows.iter().map(|row| row.len() as u64).sum();
-                            metrics.record_transfer(chunk_rows, chunk_bytes);
-                        }
-                        let validation_started = metrics_enabled().then(Instant::now);
-                        for row in chunk.rows {
-                            let daa = service_row_daa(&row).ok_or(ProtocolError::Other("malformed service-state row"))?;
-                            if daa > handoff_cutoff {
-                                return Err(ProtocolError::Other("service-state row beyond the handoff ceiling"));
+        let mut resume_tracker = if verified_replay {
+            None
+        } else {
+            recovery.as_ref().map(|recovery| ServiceStateWireTracker::from_metadata(recovery.metadata()))
+        };
+
+        if !verified_replay {
+            loop {
+                let wait_started = metrics_enabled().then(Instant::now);
+                let received = tokio::time::timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT, self.incoming_route.recv()).await;
+                if let Some(wait_started) = wait_started {
+                    metrics.record_peer_wait_time(wait_started.elapsed());
+                }
+                match received {
+                    Ok(Some(msg)) => match msg.payload {
+                        Some(Payload::ServiceStateChunk(chunk)) => {
+                            if let Some(tracker) = &mut resume_tracker {
+                                let chunk_pruning_point: Option<Hash> =
+                                    chunk.pruning_point_hash.clone().map(TryInto::try_into).transpose()?;
+                                tracker
+                                    .accept_chunk(chunk_pruning_point, chunk.start_cursor, chunk.next_cursor, &chunk.rows)
+                                    .map_err(|err| {
+                                        ProtocolError::OtherOwned(format!("invalid IBD v2 service-state chunk metadata: {err:?}"))
+                                    })?;
                             }
-                            // The pruning point's sealed commitment covers rows at or below it.
-                            // Handoff rows above it are vetted by the per-header commitments
-                            // that arrive as the chain grows past them.
-                            if daa <= pp_daa {
-                                acc.add_element(&row);
-                                prefix_rows += 1;
+
+                            if metrics_enabled() {
+                                let chunk_rows = chunk.rows.len() as u64;
+                                let chunk_bytes = chunk.rows.iter().map(|row| row.len() as u64).sum();
+                                metrics.record_transfer(chunk_rows, chunk_bytes);
                             }
-                            rows.push(row);
+
+                            let validation_started = metrics_enabled().then(Instant::now);
+                            for row in &chunk.rows {
+                                let daa = service_row_daa(row).ok_or(ProtocolError::Other("malformed service-state row"))?;
+                                if daa > handoff_cutoff {
+                                    return Err(ProtocolError::Other("service-state row beyond the handoff ceiling"));
+                                }
+                            }
+                            if let Some(validation_started) = validation_started {
+                                metrics.record_validation_time(validation_started.elapsed());
+                            }
+
+                            if let Some(recovery) = &mut recovery {
+                                let chunk_start = chunk
+                                    .start_cursor
+                                    .ok_or(ProtocolError::Other("IBD v2 service-state chunk is missing start cursor"))?;
+                                let chunk_next = chunk
+                                    .next_cursor
+                                    .ok_or(ProtocolError::Other("IBD v2 service-state chunk is missing next cursor"))?;
+                                let storage_started = metrics_enabled().then(Instant::now);
+                                let durable = recovery.append_chunk(chunk_start, chunk_next, &chunk.rows).map_err(|err| {
+                                    ProtocolError::OtherOwned(format!("failed to persist IBD v2 service-state chunk: {err}"))
+                                })?;
+                                if let Some(tracker) = &resume_tracker
+                                    && tracker.metadata() != durable
+                                {
+                                    return Err(ProtocolError::Other(
+                                        "IBD v2 service-state wire cursor diverged from durable spool cursor",
+                                    ));
+                                }
+                                if let Some(storage_started) = storage_started {
+                                    metrics.record_storage_time(storage_started.elapsed());
+                                }
+                            } else {
+                                rows.extend(chunk.rows);
+                            }
                         }
-                        if let Some(validation_started) = validation_started {
-                            metrics.record_validation_time(validation_started.elapsed());
+                        Some(Payload::DoneServiceStateChunks(done)) => {
+                            if let Some(tracker) = &mut resume_tracker {
+                                let done_pruning_point: Option<Hash> = done.pruning_point_hash.map(TryInto::try_into).transpose()?;
+                                tracker.accept_done(done_pruning_point, done.next_cursor).map_err(|err| {
+                                    ProtocolError::OtherOwned(format!("invalid IBD v2 service-state completion metadata: {err:?}"))
+                                })?;
+                                if let Some(recovery) = &recovery
+                                    && tracker.metadata() != recovery.metadata()
+                                {
+                                    return Err(ProtocolError::Other(
+                                        "IBD v2 service-state completion cursor diverged from durable spool cursor",
+                                    ));
+                                }
+                            }
+                            break;
                         }
-                    }
-                    Some(Payload::DoneServiceStateChunks(done)) => {
-                        if let Some(tracker) = &mut resume_tracker {
-                            let done_pruning_point: Option<Hash> = done.pruning_point_hash.map(TryInto::try_into).transpose()?;
-                            tracker.accept_done(done_pruning_point, done.next_cursor).map_err(|err| {
-                                ProtocolError::OtherOwned(format!("invalid IBD v2 service-state completion metadata: {err:?}"))
-                            })?;
+                        _ => {
+                            return Err(ProtocolError::UnexpectedMessage(
+                                stringify!(Payload::ServiceStateChunk | Payload::DoneServiceStateChunks),
+                                msg.payload.as_ref().map(|v| v.into()),
+                            ));
                         }
-                        break;
-                    }
-                    _ => {
-                        return Err(ProtocolError::UnexpectedMessage(
-                            stringify!(Payload::ServiceStateChunk | Payload::DoneServiceStateChunks),
-                            msg.payload.as_ref().map(|v| v.into()),
-                        ));
-                    }
-                },
-                Ok(None) => return Err(ProtocolError::ConnectionClosed),
-                Err(_) => return Err(ProtocolError::Timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT)),
+                    },
+                    Ok(None) => return Err(ProtocolError::ConnectionClosed),
+                    Err(_) => return Err(ProtocolError::Timeout(keryx_p2p_lib::common::DEFAULT_TIMEOUT)),
+                }
             }
         }
+
         if let Some(tracker) = resume_tracker {
             let checkpoint = tracker.metadata();
             debug!(
@@ -857,9 +943,34 @@ impl IbdFlow {
                 checkpoint.row_count
             );
         }
+
+        if let Some(recovery) = &mut recovery {
+            let storage_started = metrics_enabled().then(Instant::now);
+            rows = recovery
+                .read_all_rows()
+                .map_err(|err| ProtocolError::OtherOwned(format!("failed to read durable IBD v2 service-state spool: {err}")))?;
+            if let Some(storage_started) = storage_started {
+                metrics.record_storage_time(storage_started.elapsed());
+            }
+        }
+
+        // Recompute from the complete durable row stream. This deliberately revalidates every
+        // row after a resume so the final MuHash never trusts checkpoint metadata alone.
+        let finalize_started = metrics_enabled().then(Instant::now);
+        let mut acc = MuHash::new();
+        let mut prefix_rows = 0usize;
+        for row in &rows {
+            let daa = service_row_daa(row).ok_or(ProtocolError::Other("malformed service-state row"))?;
+            if daa > handoff_cutoff {
+                return Err(ProtocolError::Other("service-state row beyond the handoff ceiling"));
+            }
+            if daa <= pp_daa {
+                acc.add_element(row);
+                prefix_rows += 1;
+            }
+        }
         // Mirror `commitment_at` exactly: no rows seals nothing, and the expected value is then
         // the zero hash.
-        let finalize_started = metrics_enabled().then(Instant::now);
         let computed = if prefix_rows == 0 { Hash::default() } else { acc.finalize() };
         if let Some(finalize_started) = finalize_started {
             metrics.record_validation_time(finalize_started.elapsed());
@@ -870,21 +981,32 @@ impl IbdFlow {
                 computed, expected
             )));
         }
-        let handoff_rows = rows.len() - prefix_rows;
+
+        if let Some(recovery) = &mut recovery {
+            recovery
+                .mark_verified()
+                .map_err(|err| ProtocolError::OtherOwned(format!("failed to checkpoint verified IBD v2 service state: {err}")))?;
+        }
+
+        let total_rows = rows.len();
+        let handoff_rows = total_rows - prefix_rows;
         let storage_started = metrics_enabled().then(Instant::now);
         consensus.clone().spawn_blocking(move |c| c.import_service_state(rows)).await?;
         if let Some(storage_started) = storage_started {
             metrics.record_storage_time(storage_started.elapsed());
         }
-        info!(
-            "imported {} sealed service-state rows ({} verified, {} handoff)",
-            prefix_rows + handoff_rows,
-            prefix_rows,
-            handoff_rows
-        );
+
+        if let Some(recovery) = &mut recovery {
+            recovery
+                .mark_committed()
+                .map_err(|err| ProtocolError::OtherOwned(format!("failed to commit IBD v2 service-state checkpoint: {err}")))?;
+        }
+
+        info!("imported {} sealed service-state rows ({} verified, {} handoff)", total_rows, prefix_rows, handoff_rows);
         if metrics_enabled() {
             info!(
-                "IBD-V2-METRICS: stage=service-state complete=true rows={} verified={} handoff={} bytes={} elapsed={:.3}s rate={:.2} rows/s throughput={:.2} MB/s peer_wait={:.3}s peer_wait_pct={:.1}% validation={:.3}s storage={:.3}s",
+                "IBD-V2-METRICS: stage=service-state complete=true rows={} downloaded_this_session={} verified={} handoff={} bytes={} elapsed={:.3}s rate={:.2} rows/s throughput={:.2} MB/s peer_wait={:.3}s peer_wait_pct={:.1}% validation={:.3}s storage={:.3}s",
+                total_rows,
                 metrics.items,
                 prefix_rows,
                 handoff_rows,
@@ -900,7 +1022,6 @@ impl IbdFlow {
         }
         Ok(())
     }
-
     async fn sync_missing_relay_past_headers(
         &mut self,
         consensus: &ConsensusProxy,

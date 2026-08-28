@@ -359,6 +359,7 @@ pub fn create_core_with_runtime(runtime: &Runtime, args: &Args, fd_total_budget:
 
     let app_dir = get_app_dir_from_args(args);
     let db_dir = app_dir.join(network.to_prefixed()).join(DEFAULT_DATA_DIR);
+    let ibd_v2_state_dir = db_dir.join("ibd-v2");
 
     // Print package name and version
     info!("{} v{}", env!("CARGO_PKG_NAME"), git::with_short_hash(version()));
@@ -695,6 +696,7 @@ Do you confirm? (y/n)";
         notification_root,
         hub.clone(),
         mining_rule_engine.clone(),
+        ibd_v2_state_dir,
     ));
     let p2p_service = Arc::new(P2pService::new(
         flow_context.clone(),

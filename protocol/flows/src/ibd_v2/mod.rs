@@ -8,6 +8,7 @@ pub mod checkpoint;
 pub mod compat;
 pub mod metrics;
 pub mod service_state;
+pub mod service_state_recovery;
 pub mod service_state_spool;
 pub mod state;
 

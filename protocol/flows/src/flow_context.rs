@@ -42,6 +42,7 @@ use keryx_utils::networking::PeerId;
 use parking_lot::{Mutex, RwLock};
 use std::collections::{HashMap, HashSet, VecDeque};
 use std::net::IpAddr;
+use std::path::{Path, PathBuf};
 use std::time::Instant;
 use std::{collections::hash_map::Entry, fmt::Display};
 use std::{
@@ -223,6 +224,7 @@ pub struct FlowContextInner {
     mining_manager: MiningManagerProxy,
     pub(crate) tick_service: Arc<TickService>,
     notification_root: Arc<ConsensusNotificationRoot>,
+    ibd_v2_state_dir: PathBuf,
 
     // Special sampling logger used only for high-bps networks where logs must be throttled
     block_event_logger: Option<BlockEventLogger>,
@@ -384,6 +386,7 @@ impl FlowContext {
         notification_root: Arc<ConsensusNotificationRoot>,
         hub: Hub,
         mining_rule_engine: Arc<MiningRuleEngine>,
+        ibd_v2_state_dir: PathBuf,
     ) -> Self {
         let bps = config.bps() as usize;
         let orphan_resolution_range = BASELINE_ORPHAN_RESOLUTION_RANGE + (bps as f64).log2().ceil() as u32;
@@ -407,6 +410,7 @@ impl FlowContext {
                 mining_manager,
                 tick_service,
                 notification_root,
+                ibd_v2_state_dir,
                 block_event_logger: Some(BlockEventLogger::new(bps)),
                 bps,
                 orphan_resolution_range,
@@ -428,6 +432,10 @@ impl FlowContext {
 
     pub fn max_orphans(&self) -> usize {
         self.max_orphans
+    }
+
+    pub fn ibd_v2_state_dir(&self) -> &Path {
+        &self.ibd_v2_state_dir
     }
 
     pub fn start_async_services(&self) {
