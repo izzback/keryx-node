@@ -6,6 +6,8 @@ use crate::{
         metrics::{StageMetrics, metrics_enabled},
         service_state::ServiceStateWireTracker,
         service_state_recovery::ServiceStateRecovery,
+        stage_tracking::IbdStageTracker,
+        state::Stage,
         utxo_recovery::UtxoRecovery,
     },
 };
@@ -138,6 +140,14 @@ impl IbdFlow {
         Self { ctx, router, incoming_route, relay_receiver, body_only_ibd_permitted, header_format, protocol_version }
     }
 
+    fn stage_tracker(&self, pruning_point: Hash) -> Result<Option<IbdStageTracker>, ProtocolError> {
+        if !crate::ibd_v2::enabled_from_env() {
+            return Ok(None);
+        }
+        IbdStageTracker::open(self.ctx.ibd_v2_state_dir(), self.ctx.config.genesis.hash, pruning_point)
+            .map(Some)
+            .map_err(|err| ProtocolError::OtherOwned(format!("failed to open IBD v2 independent stage tracker: {err}")))
+    }
     async fn start_impl(&mut self) -> Result<(), ProtocolError> {
         while let Ok(relay_block) = self.relay_receiver.recv().await {
             if let Some(_guard) = self.ctx.try_set_ibd_running(self.router.key(), relay_block.header.daa_score) {
@@ -180,6 +190,12 @@ impl IbdFlow {
         match ibd_type {
             IbdType::Sync { highest_known_syncer_chain_hash, is_utxo_stable, is_pp_anticone_synced } => {
                 let pruning_point = session.async_pruning_point().await;
+                let stage_tracker = self.stage_tracker(pruning_point)?;
+                if let Some(tracker) = &stage_tracker {
+                    tracker
+                        .reconcile_committed_from_consensus(Stage::Pruning, 1, Some(1))
+                        .map_err(|err| ProtocolError::OtherOwned(format!("failed to reconcile IBD v2 Pruning stage: {err}")))?;
+                }
 
                 info!("syncing ahead from current pruning point");
                 // Following IBD catchup a new pruning point is designated and finalized in consensus. Blocks from its anticone (including itself)
@@ -210,6 +226,11 @@ impl IbdFlow {
                     self.sync_service_state(&session, pruning_point, &relay_block.header).await?;
                 }
                 // Once utxo is valid, simply sync missing headers
+                if let Some(tracker) = &stage_tracker {
+                    tracker
+                        .begin_cycle(Stage::Headers)
+                        .map_err(|err| ProtocolError::OtherOwned(format!("failed to begin IBD v2 Headers stage: {err}")))?;
+                }
                 body_target = self
                     .sync_headers(
                         &session,
@@ -218,13 +239,36 @@ impl IbdFlow {
                         &relay_block,
                     )
                     .await?;
+                if let Some(tracker) = &stage_tracker {
+                    tracker
+                        .mark_verified(Stage::Headers, 1, Some(1))
+                        .and_then(|_| tracker.mark_committed(Stage::Headers, 1, Some(1)))
+                        .map_err(|err| ProtocolError::OtherOwned(format!("failed to commit IBD v2 Headers stage: {err}")))?;
+                }
             }
             IbdType::DownloadHeadersProof => {
+                let stage_tracker = self.stage_tracker(negotiation_output.syncer_pruning_point)?;
+                if let Some(tracker) = &stage_tracker {
+                    tracker
+                        .begin_cycle(Stage::Pruning)
+                        .and_then(|_| tracker.begin_cycle(Stage::Headers))
+                        .map_err(|err| ProtocolError::OtherOwned(format!("failed to begin IBD v2 headers-proof stages: {err}")))?;
+                }
                 drop(session); // Avoid holding the previous consensus throughout the staging IBD
                 let staging = self.ctx.consensus_manager.new_staging_consensus();
                 match self.ibd_with_headers_proof(&staging, negotiation_output.syncer_virtual_selected_parent, &relay_block).await {
                     Ok(()) => {
                         spawn_blocking(|| staging.commit()).await.unwrap();
+                        if let Some(tracker) = &stage_tracker {
+                            tracker
+                                .reconcile_committed_from_consensus(Stage::Pruning, 1, Some(1))
+                                .and_then(|_| tracker.reconcile_committed_from_consensus(Stage::Headers, 1, Some(1)))
+                                .map_err(|err| {
+                                    ProtocolError::OtherOwned(format!(
+                                        "failed to reconcile committed IBD v2 headers-proof stages: {err}"
+                                    ))
+                                })?;
+                        }
                         info!(
                             "Header download stage of IBD with headers proof completed successfully from {}. Committed staging consensus.",
                             self.router
@@ -245,9 +289,26 @@ impl IbdFlow {
                 }
             }
             IbdType::PruningCatchUp { highest_known_syncer_chain_hash } => {
+                let stage_tracker = self.stage_tracker(negotiation_output.syncer_pruning_point)?;
+                if let Some(tracker) = &stage_tracker {
+                    tracker
+                        .begin_cycle(Stage::Pruning)
+                        .and_then(|_| tracker.begin_cycle(Stage::Headers))
+                        .map_err(|err| ProtocolError::OtherOwned(format!("failed to begin IBD v2 pruning-catchup stages: {err}")))?;
+                }
                 info!("catching up to new pruning point {} ", negotiation_output.syncer_pruning_point);
                 match self.pruning_point_catchup(&session, &negotiation_output, &relay_block, highest_known_syncer_chain_hash).await {
                     Ok(()) => {
+                        if let Some(tracker) = &stage_tracker {
+                            tracker
+                                .reconcile_committed_from_consensus(Stage::Pruning, 1, Some(1))
+                                .and_then(|_| tracker.reconcile_committed_from_consensus(Stage::Headers, 1, Some(1)))
+                                .map_err(|err| {
+                                    ProtocolError::OtherOwned(format!(
+                                        "failed to reconcile committed IBD v2 pruning-catchup stages: {err}"
+                                    ))
+                                })?;
+                        }
                         info!("header stage of pruning catchup from peer {} completed", self.router);
                         self.sync_missing_trusted_bodies(&session).await?;
                         self.sync_new_utxo_set(&session, negotiation_output.syncer_pruning_point, &relay_block.header).await?;
@@ -262,15 +323,41 @@ impl IbdFlow {
             }
         }
 
+        // Canonical Phase 3 tracking keeps Bodies and PoM independent even while
+        // v1.5.5 still transports them through the same body pipeline. Phase 5
+        // owns independent PoM persistence/provider semantics.
+        let active_pruning_point = session.async_pruning_point().await;
+        let body_stage_tracker = self.stage_tracker(active_pruning_point)?;
+        if let Some(tracker) = &body_stage_tracker {
+            tracker
+                .set_body_sync_target(body_target)
+                .and_then(|_| tracker.begin_cycle(Stage::Bodies))
+                .and_then(|_| tracker.begin_cycle(Stage::Pom))
+                .map_err(|err| ProtocolError::OtherOwned(format!("failed to begin IBD v2 Bodies/PoM stages: {err}")))?;
+        }
         // Sync missing bodies in the past of the (possibly ceiling-capped) sync target
         self.sync_missing_block_bodies(&session, body_target).await?;
 
         // Relay block might be in the antipast of syncer sink, thus check its past for missing bodies
         // as well — but skip it under a sync ceiling (the relay block is the corrupted tip above it).
         if self.sync_ceiling().is_none() {
+            if let Some(tracker) = &body_stage_tracker {
+                tracker
+                    .set_body_sync_target(relay_block.hash())
+                    .map_err(|err| ProtocolError::OtherOwned(format!("failed to advance IBD v2 body-sync target: {err}")))?;
+            }
             self.sync_missing_block_bodies(&session, relay_block.hash()).await?;
         }
 
+        if let Some(tracker) = &body_stage_tracker {
+            // Phase 3 proves PoM work for this cycle was validated. Phase 5 owns
+            // independent proof persistence and the eventual PoM COMMITTED state.
+            tracker
+                .mark_verified(Stage::Pom, 1, Some(1))
+                .and_then(|_| tracker.mark_verified(Stage::Bodies, 1, Some(1)))
+                .and_then(|_| tracker.mark_committed(Stage::Bodies, 1, Some(1)))
+                .map_err(|err| ProtocolError::OtherOwned(format!("failed to finalize IBD v2 Bodies/PoM tracking: {err}")))?;
+        }
         // Following IBD we revalidate orphans since many of them might have been processed during the IBD
         // or are now processable
         let (queued_hashes, virtual_processing_tasks) = self.ctx.revalidate_orphans(&session).await;
