@@ -7,6 +7,7 @@ on:
     paths:
       - '.github/workflows/ibd-v2-phase3-stage-tracking-candidate.yml'
       - 'scripts/ibd-v2/phase3/apply-stage-tracking.ps1'
+      - 'scripts/ibd-v2-candidate/harden-phase3-stage-tracking.ps1'
 
 permissions:
   contents: write
@@ -67,6 +68,9 @@ jobs:
           [System.IO.File]::AppendAllText($env:GITHUB_PATH, "$cargoBin`r`n", $utf8NoBom)
           & (Join-Path $cargoBin 'rustc.exe') --version
           & (Join-Path $cargoBin 'cargo.exe') --version
+
+      - name: Apply canonical durability boundaries
+        run: .\scripts\ibd-v2-candidate\harden-phase3-stage-tracking.ps1
 
       - name: Apply and certify canonical Phase 3 tracking
         run: .\scripts\ibd-v2\phase3\apply-stage-tracking.ps1
