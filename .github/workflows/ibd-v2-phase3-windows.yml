@@ -92,14 +92,14 @@ jobs:
       - name: Check formatting of IBD v2 touch points
         run: |
           $files = @(
-            'protocol/flows/src/ibd_v2/*.rs',
-            'protocol/flows/src/ibd/flow.rs',
-            'protocol/flows/src/ibd/progress.rs',
-            'protocol/flows/src/ibd/streams.rs',
-            'protocol/flows/src/v7/request_service_state.rs',
-            'protocol/p2p/src/convert/messages.rs'
+            (Get-ChildItem 'protocol/flows/src/ibd_v2' -Filter '*.rs' -File | ForEach-Object FullName)
+            (Resolve-Path 'protocol/flows/src/ibd/flow.rs').Path
+            (Resolve-Path 'protocol/flows/src/ibd/progress.rs').Path
+            (Resolve-Path 'protocol/flows/src/ibd/streams.rs').Path
+            (Resolve-Path 'protocol/flows/src/v7/request_service_state.rs').Path
+            (Resolve-Path 'protocol/p2p/src/convert/messages.rs').Path
           )
-          rustfmt --edition 2024 --check $files
+          & rustfmt --edition 2024 --check $files
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
 
       - name: Check P2P wire crate
