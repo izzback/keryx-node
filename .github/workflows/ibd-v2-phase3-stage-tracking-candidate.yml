@@ -6,8 +6,8 @@ on:
       - ibd-v2-phase3-persistent-state
     paths:
       - '.github/workflows/ibd-v2-phase3-stage-tracking-candidate.yml'
-      - 'scripts/ibd-v2-candidate/apply-stage-tracking-v2.ps1'
-      - 'scripts/ibd-v2-candidate/normalize-stage-tracking-script.ps1'
+      - 'scripts/ibd-v2-candidate/apply-stage-tracking-v3.ps1'
+      - 'scripts/ibd-v2-candidate/stage-tracking-source.rs'
 
 permissions:
   contents: write
@@ -69,8 +69,5 @@ jobs:
           & (Join-Path $cargoBin 'rustc.exe') --version
           & (Join-Path $cargoBin 'cargo.exe') --version
 
-      - name: Normalize candidate anchors
-        run: .\scripts\ibd-v2-candidate\normalize-stage-tracking-script.ps1
-
       - name: Apply and certify canonical Phase 3 tracking
-        run: .\scripts\ibd-v2-candidate\apply-stage-tracking-v2.ps1
+        run: .\scripts\ibd-v2-candidate\apply-stage-tracking-v3.ps1
