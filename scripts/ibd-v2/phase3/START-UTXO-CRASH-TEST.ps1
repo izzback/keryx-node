@@ -1,6 +1,6 @@
 [CmdletBinding()]
 param(
-    [ValidateSet('utxo-after-clear','utxo-after-checkpoint','utxo-after-chunk-commit','utxo-after-verified','utxo-after-import')]
+    [ValidateSet('utxo-after-clear','utxo-after-checkpoint','utxo-after-chunk-commit','utxo-after-verified','utxo-after-import','utxo-after-committed')]
     [string]$FaultPoint = 'utxo-after-chunk-commit',
     [string]$NodePath = (Join-Path $PSScriptRoot 'keryxd.exe'),
     [string]$DataDir = 'E:\datanode\keryx-ibd-v2-utxo-realtest',

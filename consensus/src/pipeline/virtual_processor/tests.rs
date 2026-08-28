@@ -1,3 +1,4 @@
+use crate::constants::TX_VERSION;
 use crate::{
     consensus::test_consensus::TestConsensus,
     model::{
@@ -5,7 +6,6 @@ use crate::{
         stores::{ai_slash::AiResponseStoreReader, pom_tier::PomTierStoreReader},
     },
 };
-use keryx_inference::{self, AiResponsePayload, compute_ai_commitment};
 use keryx_consensus_core::{
     BlockHashSet,
     api::ConsensusApi,
@@ -17,8 +17,8 @@ use keryx_consensus_core::{
     subnets::SUBNETWORK_ID_AI_RESPONSE,
     tx::{ScriptPublicKey, ScriptVec, Transaction},
 };
-use crate::constants::TX_VERSION;
 use keryx_hashes::Hash;
+use keryx_inference::{self, AiResponsePayload, compute_ai_commitment};
 use std::{collections::VecDeque, thread::JoinHandle};
 
 struct OnetimeTxSelector {
@@ -467,15 +467,8 @@ async fn burned_escrow_outpoint_spend_is_rejected() {
 
     let outpoint = TransactionOutpoint::new(7u64.into(), 1);
     vp.service_burned.write().insert(outpoint, 0);
-    let tx = Transaction::new(
-        TX_VERSION,
-        vec![TransactionInput::new(outpoint, vec![], 0, 0)],
-        vec![],
-        0,
-        SUBNETWORK_ID_NATIVE,
-        0,
-        vec![],
-    );
+    let tx =
+        Transaction::new(TX_VERSION, vec![TransactionInput::new(outpoint, vec![], 0, 0)], vec![], 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
     // A burn binds POVs strictly past `event daa + finality`: the sink reaching that score flushes
     // it only after its own blocks are validated, so the block AT that score is one the network
     // accepted. A node holding the row while replaying below it (fresh sync / restart catch-up)
@@ -489,15 +482,8 @@ async fn burned_escrow_outpoint_spend_is_rejected() {
 
     // An untouched outpoint still fails only on the missing entry, proving the set is selective.
     let other = TransactionOutpoint::new(8u64.into(), 1);
-    let tx2 = Transaction::new(
-        TX_VERSION,
-        vec![TransactionInput::new(other, vec![], 0, 0)],
-        vec![],
-        0,
-        SUBNETWORK_ID_NATIVE,
-        0,
-        vec![],
-    );
+    let tx2 =
+        Transaction::new(TX_VERSION, vec![TransactionInput::new(other, vec![], 0, 0)], vec![], 0, SUBNETWORK_ID_NATIVE, 0, vec![]);
     let res2 = vp.validate_transaction_in_utxo_context(&tx2, &UtxoCollection::default(), 1, TxValidationFlags::Full);
     assert!(matches!(res2, Err(TxRuleError::MissingTxOutpoints)));
 
@@ -573,7 +559,6 @@ async fn service_cohort_from_recent_tier_producers() {
     assert_eq!(vp.service_eligible_miners(seed, 0), vec![(id1, e1)]);
     assert!(vp.service_eligible_miners(seed, 1).is_empty(), "a miner without an escrow bond is never eligible");
     assert!(vp.service_eligible_miners(seed, 4).is_empty());
-
 
     // A 1-DAA window covers b5 alone, whose only merged blue is b4 (m1, tier 0).
     assert_eq!(vp.service_eligible_miners_windowed(seed, 0, 1), vec![(id1, e1)]);
@@ -981,7 +966,13 @@ async fn coin_age_maturation_choreography_adversarial() {
         &[
             (
                 B + 90,
-                vec![(1, 0xA1, 500, B), (2, 0xA1, 600, B + 40), (3, 0xB2, 700, B + 20), (4, 0xB2, 800, B + 70), (5, 0xC3, 900, B + 90)],
+                vec![
+                    (1, 0xA1, 500, B),
+                    (2, 0xA1, 600, B + 40),
+                    (3, 0xB2, 700, B + 20),
+                    (4, 0xB2, 800, B + 70),
+                    (5, 0xC3, 900, B + 90),
+                ],
                 vec![],
             ),
             (B + W + 50, vec![], vec![]),
@@ -1021,66 +1012,66 @@ async fn coin_age_maturation_choreography_adversarial() {
     // fully determined by SEED — a failure prints the commit index, so the exact minimal replay
     // can be reconstructed by truncating the generated script.
     for seed in 1u64..=8 {
-    let mut rng = 0x5EED_C014_A6E0_0000 + seed;
-    let mut next = move || {
-        // SplitMix64: deterministic, dependency-free.
-        rng = rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
-        let mut z = rng;
-        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
-        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
-        z ^ (z >> 31)
-    };
-    let mut s9: Vec<CommitSpec> = Vec::new();
-    let mut score = B + W; // start beyond one full window so inherited anchors can be mature
-    let mut floor = score; // never drop below the highest rebuild-free depth we allow
-    let mut alive: Vec<u64> = Vec::new();
-    let mut next_id = 1_000u64;
-    for _ in 0..1_500 {
-        // Score walk: mostly forward, ~1/4 shallow re-anchors (bounded well under retention).
-        if next() % 4 == 0 && score > floor + 2 {
-            let max_drop = (score - floor).min(400);
-            score -= 1 + next() % max_drop;
-        } else {
-            score += 1 + next() % 300;
-            if score > floor + 5_000 {
-                floor = score - 5_000;
+        let mut rng = 0x5EED_C014_A6E0_0000 + seed;
+        let mut next = move || {
+            // SplitMix64: deterministic, dependency-free.
+            rng = rng.wrapping_add(0x9E37_79B9_7F4A_7C15);
+            let mut z = rng;
+            z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+            z ^ (z >> 31)
+        };
+        let mut s9: Vec<CommitSpec> = Vec::new();
+        let mut score = B + W; // start beyond one full window so inherited anchors can be mature
+        let mut floor = score; // never drop below the highest rebuild-free depth we allow
+        let mut alive: Vec<u64> = Vec::new();
+        let mut next_id = 1_000u64;
+        for _ in 0..1_500 {
+            // Score walk: mostly forward, ~1/4 shallow re-anchors (bounded well under retention).
+            if next() % 4 == 0 && score > floor + 2 {
+                let max_drop = (score - floor).min(400);
+                score -= 1 + next() % max_drop;
+            } else {
+                score += 1 + next() % 300;
+                if score > floor + 5_000 {
+                    floor = score - 5_000;
+                }
             }
-        }
-        let mut adds: Vec<(u64, u8, u64, u64)> = Vec::new();
-        let mut spends: Vec<u64> = Vec::new();
-        // 0..=2 spends of random alive coins.
-        for _ in 0..next() % 3 {
-            if !alive.is_empty() {
+            let mut adds: Vec<(u64, u8, u64, u64)> = Vec::new();
+            let mut spends: Vec<u64> = Vec::new();
+            // 0..=2 spends of random alive coins.
+            for _ in 0..next() % 3 {
+                if !alive.is_empty() {
+                    let idx = (next() % alive.len() as u64) as usize;
+                    spends.push(alive.swap_remove(idx));
+                }
+            }
+            // ~1/10 commits re-anchor an alive coin: same outpoint spent AND re-added, new anchor.
+            // Selected BEFORE the fresh deposits below, so a coin added this very commit can never be
+            // picked (the runner folds spends before adds).
+            if next() % 10 == 0 && !alive.is_empty() {
                 let idx = (next() % alive.len() as u64) as usize;
-                spends.push(alive.swap_remove(idx));
+                let id = alive[idx];
+                spends.push(id);
+                let eda = score.saturating_sub(next() % (W + 100));
+                adds.push((id, 0xD0 + (next() % 12) as u8, 100 + next() % 900, eda.min(score)));
             }
+            // 0..=2 deposits over a 12-SPK pool, anchors mixing fresh / inherited / boundary-exact.
+            for _ in 0..next() % 3 {
+                let spk_byte = 0xD0 + (next() % 12) as u8;
+                let eda = match next() % 4 {
+                    0 => score - next() % 50,                      // fresh (immature)
+                    1 => score.saturating_sub(W + next() % 300),   // inherited, already mature
+                    2 => score.saturating_sub(W) + next() % 11,    // exactly around the split bound
+                    _ => score.saturating_sub(next() % (W + 200)), // anywhere in (and past) the window
+                };
+                adds.push((next_id, spk_byte, 100 + next() % 900, eda.min(score)));
+                alive.push(next_id);
+                next_id += 1;
+            }
+            s9.push((score, adds, spends));
         }
-        // ~1/10 commits re-anchor an alive coin: same outpoint spent AND re-added, new anchor.
-        // Selected BEFORE the fresh deposits below, so a coin added this very commit can never be
-        // picked (the runner folds spends before adds).
-        if next() % 10 == 0 && !alive.is_empty() {
-            let idx = (next() % alive.len() as u64) as usize;
-            let id = alive[idx];
-            spends.push(id);
-            let eda = score.saturating_sub(next() % (W + 100));
-            adds.push((id, 0xD0 + (next() % 12) as u8, 100 + next() % 900, eda.min(score)));
-        }
-        // 0..=2 deposits over a 12-SPK pool, anchors mixing fresh / inherited / boundary-exact.
-        for _ in 0..next() % 3 {
-            let spk_byte = 0xD0 + (next() % 12) as u8;
-            let eda = match next() % 4 {
-                0 => score - next() % 50,                        // fresh (immature)
-                1 => score.saturating_sub(W + next() % 300),     // inherited, already mature
-                2 => score.saturating_sub(W) + next() % 11,      // exactly around the split bound
-                _ => score.saturating_sub(next() % (W + 200)),   // anywhere in (and past) the window
-            };
-            adds.push((next_id, spk_byte, 100 + next() % 900, eda.min(score)));
-            alive.push(next_id);
-            next_id += 1;
-        }
-        s9.push((score, adds, spends));
-    }
-    run(&format!("s9_fuzz_walk_seed_{seed}"), &s9);
+        run(&format!("s9_fuzz_walk_seed_{seed}"), &s9);
     }
 
     // S10 — the POOLARIS / izzback hypothesis: a tx re-accepted by a different chain block during
@@ -1237,4 +1228,29 @@ async fn cohort_window_below_the_pruned_horizon_arms_empty() {
     let vp = tc.virtual_processor().clone();
     let early = vp.selected_chain_store.read().get_by_index(6).unwrap();
     assert!(vp.service_eligible_miners_windowed(early, 0, 100).is_empty());
+}
+
+/// A crash at `utxo-after-import` happens only after the complete pruning-point import returned
+/// successfully but before the filesystem recovery checkpoint is marked Committed. Restarting
+/// deliberately invokes the same import again, so replaying an identical verified snapshot must
+/// preserve the externally-visible virtual state rather than accumulate derived state.
+#[tokio::test]
+async fn pruning_point_utxo_import_replay_is_idempotent() {
+    use keryx_muhash::MuHash;
+
+    let config = ConfigBuilder::new(MAINNET_PARAMS).skip_proof_of_work().build();
+    let ctx = TestContext::new(TestConsensus::new(&config));
+    let genesis = ctx.consensus.params().genesis.hash;
+
+    ctx.consensus.import_pruning_point_utxo_set(genesis, MuHash::new()).unwrap();
+    let first_sink = ctx.consensus.get_sink();
+    let first_parents = ctx.consensus.get_virtual_parents();
+    let first_status = ctx.consensus.get_block_status(genesis);
+
+    ctx.consensus.import_pruning_point_utxo_set(genesis, MuHash::new()).unwrap();
+
+    assert_eq!(ctx.consensus.get_sink(), first_sink);
+    assert_eq!(ctx.consensus.get_virtual_parents(), first_parents);
+    assert_eq!(ctx.consensus.get_block_status(genesis), first_status);
+    assert_eq!(ctx.consensus.get_block_status(genesis), Some(BlockStatus::StatusUTXOValid));
 }

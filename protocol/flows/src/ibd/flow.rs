@@ -767,6 +767,10 @@ impl IbdFlow {
             self.sync_pruning_point_utxoset(consensus, pruning_point, recovery.as_mut()).await?;
         }
 
+        // Deterministic coverage for the final UTXO->Service-State handoff window. At this
+        // boundary the UTXO checkpoint is already Committed, while Service State is not armed
+        // yet. Restart must skip UTXO network replay and arm Service State before stability.
+        crate::ibd_v2::fault_injection::crash_if_requested("utxo-after-committed");
         // Arm Service State before exposing the UTXO stage as stable. A crash after UTXO commit
         // but before this point therefore re-enters sync_new_utxo_set, observes the committed
         // UTXO checkpoint, skips the network, and arms Service State before setting stability.
