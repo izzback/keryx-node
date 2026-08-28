@@ -89,17 +89,21 @@ jobs:
       - name: Verify Phase 4.1 formatting and diff hygiene
         run: |
           $ErrorActionPreference = 'Stop'
-          $changed = @(
+          $normalFiles = @(
             'consensus/core/src/api/mod.rs',
             'consensus/src/processes/sync/mod.rs',
-            'consensus/src/consensus/mod.rs',
             'components/consensusmanager/src/session.rs',
             'protocol/flows/src/ibd/flow.rs'
           )
-          foreach ($file in $changed) {
+          foreach ($file in $normalFiles) {
             rustfmt --edition 2024 --check $file
             if ($LASTEXITCODE -ne 0) { throw "rustfmt check failed for $file" }
           }
+          # This module root owns pre-existing v1.5.6 children (storage.rs/test_consensus.rs) that
+          # are outside Phase 4.1 and are not rustfmt-clean. Check mod.rs itself without recursively
+          # formatting those untouched children.
+          rustfmt --edition 2024 --check --config skip_children=true consensus/src/consensus/mod.rs
+          if ($LASTEXITCODE -ne 0) { throw 'rustfmt check failed for consensus/src/consensus/mod.rs' }
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed' }
 
