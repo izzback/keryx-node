@@ -1,16 +1,6 @@
 $ErrorActionPreference = 'Stop'
 Set-Location (Resolve-Path (Join-Path $PSScriptRoot '..\..'))
 
-function Replace-Exact {
-    param([string]$Path,[string]$Old,[string]$New)
-    $resolved = Resolve-Path $Path
-    $text = [IO.File]::ReadAllText($resolved)
-    if ($text.Contains($New)) { Write-Host "Already patched: $Path"; return }
-    if (-not $text.Contains($Old)) { throw "Expected patch anchor not found in ${Path}" }
-    $text = $text.Replace($Old,$New)
-    [IO.File]::WriteAllText($resolved,$text,(New-Object System.Text.UTF8Encoding($false)))
-}
-
 Write-Host 'Installing protoc 29.6 and Rust 1.93.0 for final Phase 3 certification...'
 $protocVersion = '29.6'
 $protocArchive = Join-Path $env:RUNNER_TEMP "protoc-$protocVersion-final.zip"
@@ -38,44 +28,44 @@ $env:PATH = "$(Join-Path $cargoHome 'bin');$env:PATH"
 if ($LASTEXITCODE -ne 0) { throw 'rust components setup failed' }
 
 Write-Host 'Adding deterministic crash point after durable UTXO Committed checkpoint...'
-$flowOld = @'
-            self.sync_pruning_point_utxoset(consensus, pruning_point, recovery.as_mut()).await?;
-        }
-
-        // Arm Service State before exposing the UTXO stage as stable. A crash after UTXO commit
-'@
-$flowNew = @'
-            self.sync_pruning_point_utxoset(consensus, pruning_point, recovery.as_mut()).await?;
-        }
-
-        // Deterministic coverage for the final UTXO->Service-State handoff window. At this
-        // boundary the UTXO checkpoint is already Committed, while Service State is not armed
-        // yet. On restart the committed checkpoint must skip UTXO network replay, then arm
-        // Service State before the UTXO set is exposed as stable.
-        crate::ibd_v2::fault_injection::crash_if_requested("utxo-after-committed");
-
-        // Arm Service State before exposing the UTXO stage as stable. A crash after UTXO commit
-'@
-Replace-Exact 'protocol/flows/src/ibd/flow.rs' $flowOld $flowNew
+$flowPath = 'protocol/flows/src/ibd/flow.rs'
+$flowText = [IO.File]::ReadAllText((Resolve-Path $flowPath))
+$crashLine = '        crate::ibd_v2::fault_injection::crash_if_requested("utxo-after-committed");'
+if (-not $flowText.Contains($crashLine)) {
+    $marker = '        // Arm Service State before exposing the UTXO stage as stable. A crash after UTXO commit'
+    $index = $flowText.IndexOf($marker, [StringComparison]::Ordinal)
+    if ($index -lt 0) { throw 'Stable Service State handoff marker not found in flow.rs' }
+    $nl = if ($flowText.Contains("`r`n")) { "`r`n" } else { "`n" }
+    $insert = @(
+        '        // Deterministic coverage for the final UTXO->Service-State handoff window. At this',
+        '        // boundary the UTXO checkpoint is already Committed, while Service State is not armed',
+        '        // yet. Restart must skip UTXO network replay and arm Service State before stability.',
+        '        crate::ibd_v2::fault_injection::crash_if_requested("utxo-after-committed");',
+        ''
+    ) -join $nl
+    $flowText = $flowText.Insert($index, $insert)
+    [IO.File]::WriteAllText((Resolve-Path $flowPath),$flowText,(New-Object System.Text.UTF8Encoding($false)))
+}
 
 Write-Host 'Exposing utxo-after-committed in the Windows real-test launcher...'
 $scriptPath = 'scripts/ibd-v2/phase3/START-UTXO-CRASH-TEST.ps1'
 $scriptText = [IO.File]::ReadAllText((Resolve-Path $scriptPath))
-$scriptText = $scriptText.Replace("'utxo-after-verified','utxo-after-import'", "'utxo-after-verified','utxo-after-import','utxo-after-committed'")
-[IO.File]::WriteAllText((Resolve-Path $scriptPath),$scriptText,(New-Object System.Text.UTF8Encoding($false)))
+if (-not $scriptText.Contains("'utxo-after-committed'")) {
+    $scriptText = $scriptText.Replace("'utxo-after-verified','utxo-after-import'", "'utxo-after-verified','utxo-after-import','utxo-after-committed'")
+    [IO.File]::WriteAllText((Resolve-Path $scriptPath),$scriptText,(New-Object System.Text.UTF8Encoding($false)))
+}
 
 Write-Host 'Adding consensus-level double-import regression test...'
 $testsPath = 'consensus/src/pipeline/virtual_processor/tests.rs'
 $testsText = [IO.File]::ReadAllText((Resolve-Path $testsPath))
-$marker = 'async fn pruning_point_utxo_import_replay_is_idempotent()'
-if (-not $testsText.Contains($marker)) {
+$testMarker = 'async fn pruning_point_utxo_import_replay_is_idempotent()'
+if (-not $testsText.Contains($testMarker)) {
 $test = @'
 
 /// A crash at `utxo-after-import` happens only after the complete pruning-point import returned
 /// successfully but before the filesystem recovery checkpoint is marked Committed. Restarting
-/// therefore deliberately invokes the same import again. Pin that replay property here: importing
-/// the exact same verified snapshot twice must succeed and preserve the externally-visible virtual
-/// state instead of accumulating or diverging derived state.
+/// deliberately invokes the same import again, so replaying an identical verified snapshot must
+/// preserve the externally-visible virtual state rather than accumulate derived state.
 #[tokio::test]
 async fn pruning_point_utxo_import_replay_is_idempotent() {
     use keryx_muhash::MuHash;
