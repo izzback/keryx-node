@@ -3,9 +3,10 @@
 //! Stages are deliberately tracked separately so a restart does not force the
 //! node to repeat work that was already verified or committed.
 
+use borsh::{BorshDeserialize, BorshSerialize};
 use keryx_hashes::{Hash, Hasher, MuHashElementHash};
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
 pub enum Stage {
     Headers,
     Pruning,
@@ -15,7 +16,11 @@ pub enum Stage {
     Bodies,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+impl Stage {
+    pub const ALL: [Self; 6] = [Self::Headers, Self::Pruning, Self::Utxo, Self::ServiceState, Self::Pom, Self::Bodies];
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, BorshSerialize, BorshDeserialize)]
 pub enum StageStatus {
     NotStarted,
     Downloading,
@@ -23,7 +28,7 @@ pub enum StageStatus {
     Committed,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct StageProgress {
     pub stage: Stage,
     pub status: StageStatus,
@@ -54,7 +59,7 @@ impl StageProgress {
 /// from. `last_row_fingerprint` anchors that cursor to actual content so a
 /// resumed transfer can detect a peer whose row sequence differs before it
 /// trusts the requested offset.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, BorshSerialize, BorshDeserialize)]
 pub struct ServiceStateResumeMetadata {
     pub pruning_point: Hash,
     pub next_cursor: u64,
