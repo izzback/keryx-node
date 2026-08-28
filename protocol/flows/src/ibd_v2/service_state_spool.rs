@@ -100,14 +100,7 @@ impl ServiceStateSpool {
         let scan = scan_records(&mut file, pruning_point, true, false)?;
         file.seek(SeekFrom::End(0))?;
 
-        Ok(Self {
-            path,
-            file,
-            genesis_hash,
-            pruning_point,
-            metadata: scan.metadata,
-            truncated_tail_on_open: scan.truncated,
-        })
+        Ok(Self { path, file, genesis_hash, pruning_point, metadata: scan.metadata, truncated_tail_on_open: scan.truncated })
     }
 
     pub fn path(&self) -> &Path {
