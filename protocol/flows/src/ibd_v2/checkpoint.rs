@@ -9,7 +9,7 @@ use blake2b_simd::Params;
 use borsh::{BorshDeserialize, BorshSerialize};
 use keryx_hashes::Hash;
 use std::{
-    fs::{self, File, OpenOptions},
+    fs::{self, OpenOptions},
     io::{self, Write},
     path::{Path, PathBuf},
 };
@@ -304,7 +304,7 @@ fn replace_file_atomic(replacement: &Path, target: &Path) -> io::Result<()> {
 
 #[cfg(unix)]
 fn sync_parent_directory(parent: &Path) -> io::Result<()> {
-    File::open(parent)?.sync_all()
+    fs::File::open(parent)?.sync_all()
 }
 
 #[cfg(not(unix))]
