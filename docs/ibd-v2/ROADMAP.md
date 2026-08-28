@@ -2,7 +2,7 @@
 
 Updated: 2026-08-28
 
-> This document follows the canonical project order. The current technical branch keeps its historical name `ibd-v2-phase3-persistent-state`, but that branch name does not redefine roadmap phase numbering.
+> This document follows the canonical project order. The Phase 3 implementation was completed on the historical branch `ibd-v2-phase3-persistent-state`; active development now proceeds to Phase 4 without redefining roadmap numbering.
 
 ## Status legend
 
@@ -158,14 +158,14 @@ Avoid unnecessarily redownloading multiple gigabytes of state.
 
 # Phase 3 — Independent IBD stage tracking
 
-Overall status: 🟨 In progress
+Overall status: 🧪 Implemented and CI-certified, real mainnet testing pending
 
-🟨 Track Headers independently
-🟨 Track Pruning independently
+✅ Track Headers independently
+✅ Track Pruning independently
 ✅ Track UTXO independently
 ✅ Track Service State independently
-🟨 Track PoM independently
-🟨 Track Bodies independently
+✅ Track PoM independently at the Phase 3 lifecycle level (`DOWNLOADING` → `VERIFIED`)
+✅ Track Bodies independently
 
 Implemented checkpoint states:
 
@@ -174,7 +174,7 @@ DOWNLOADING
 VERIFIED
 COMMITTED
 
-The durable checkpoint format is already:
+The durable checkpoint format is:
 
 - versioned
 - protected by a cryptographic checksum
@@ -183,8 +183,26 @@ The durable checkpoint format is already:
 - atomically replaced
 - able to reject corruption, truncation, unsupported versions and stale checkpoints
 
-UTXO and Service State already use these states for real recovery logic.
-Headers, Pruning, PoM and Bodies still need equivalent effective wiring before Phase 3 can be considered ✅.
+Certified Phase 3 implementation:
+
+- `IbdStageTracker` persists independent lifecycle state in the shared durable checkpoint
+- every tracker mutation reloads the latest checkpoint before writing, preventing stale writers from overwriting newer UTXO or Service State progress
+- Headers enter `DOWNLOADING` before sync and reach `COMMITTED` only after successful work
+- headers-proof Pruning/Headers are reconciled as `COMMITTED` only after the real staging consensus `commit()`
+- Pruning catch-up is reconciled from durable local consensus facts
+- Bodies persist a reconstructible body-sync target, but never trust a persisted missing-body list as consensus truth
+- Bodies reach `VERIFIED` then `COMMITTED` after successful body processing
+- PoM is tracked independently through `DOWNLOADING` and `VERIFIED`; independent PoM proof persistence/provider recovery and the PoM `COMMITTED` transition remain Phase 5 work
+- stale pruning-point checkpoints reset stage tracking safely
+
+Certification:
+
+- functional commit: `dca15c25cef891cdb610da054167936b91ce6a21`
+- clean Phase 3 head: `c21b7c1a10917f15116ee99cfeebb8d541ff5f6d`
+- permanent local-runner gate: `33192674907`
+- format, P2P wire, consensus, P2P flows, keryxd, Clippy, recovery tests, release build, package and artifact upload all passed
+
+Remaining Phase 3 validation belongs to the real crash/restart and mainnet campaign in Phase 11; it does not block starting the next offline implementation phase.
 
 Objective:
 
@@ -194,17 +212,24 @@ Make IBD recoverable instead of treating synchronization as one large all-or-not
 
 # Phase 4 — Database batching and validation
 
-Overall status: 🟨 Next offline development priority
+Overall status: 🟨 Active development phase
 
 ⬜ Batch header lookups
 ⬜ Batch block-status lookups
-⬜ Batch missing-body queries
+🟨 Batch missing-body queries
 ⬜ Use RocksDB `multi_get` where appropriate
 ⬜ Reduce repeated async consensus calls
 ⬜ Pipeline network download and validation
 ⬜ Pipeline validation and database writes
 ⬜ Dynamically adjust IBD batch sizes
 ⬜ Add queue backpressure
+
+First audited target:
+
+- current `sync_missing_block_bodies` calls `async_get_missing_block_body_hashes(high)`, which materializes the complete missing-body vector in one blocking consensus call
+- `SyncManager::get_missing_block_body_hashes` then scans for the body boundary and calls `antipast_hashes_between(..., None)` with no result bound
+- `SyncManager::antipast_hashes_between` already supports `Some(max_blocks)`, providing a safe basis for a bounded consensus-side query
+- current P2P body processing already uses `IBD_BATCH_SIZE = 99`; Phase 4 will first remove the unnecessary full-vector materialization while preserving body ordering and validation rules
 
 Completed precursor work:
 
@@ -217,7 +242,7 @@ Objective:
 
 Reduce random database access and limit CPU/network idle periods.
 
-No consensus modification.
+No change to consensus validity rules.
 
 ---
 
