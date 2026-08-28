@@ -9,14 +9,18 @@ IBD v2 development is intentionally isolated from the rolling Keryx upstream bra
 - Frozen upstream commit: `bb408d54ca3992f7f9f4e269507f7603c234d24d`
 - Immutable upstream baseline branch: `ibd-v2-base-v1.5.5`
 - Validated integration branch: `ibd-v2-integrate-v1.5.5`
-- Phase 3 development branch: `ibd-v2-phase3-persistent-state`
+- Current technical development branch: `ibd-v2-phase3-persistent-state`
+- Canonical roadmap: `docs/ibd-v2/ROADMAP.md`
+- Canonical French roadmap: `docs/ibd-v2/ROADMAP-FR.md`
 - Canonical RUN A report: `docs/ibd-v2/RUN-A-BASELINE-v1.5.5.md`
 
-The baseline/reference branches are anchors only. No Phase 3 development commits should ever be added to them.
+The current branch name is historical/technical only. It does **not** redefine roadmap phase numbering.
+
+The baseline/reference branches are anchors only. Development commits must never be added to them.
 
 ## Canonical RUN A
 
-The v1.5.5 RUN A baseline is frozen before Phase 3 work begins.
+The v1.5.5 RUN A baseline is frozen before behavioral optimization work.
 
 - IBD v2 behavior: disabled (`KERYX_IBD_V2=0`)
 - IBD v2 metrics: enabled (`KERYX_IBD_V2_METRICS=1`)
@@ -24,7 +28,7 @@ The v1.5.5 RUN A baseline is frozen before Phase 3 work begins.
 - Default Keryx RAM/cache/network/peer settings
 - Time to final live synchronization on the baseline host: **95.17 minutes**
 
-The baseline identified peer wait as the dominant PoM body-sync bottleneck, but throughput/scheduler work is deliberately deferred until persistence and recovery are correct.
+RUN A identified peer wait as the dominant PoM/body-sync bottleneck. This measurement guides later phases but does not authorize skipping roadmap order.
 
 ## Design rule
 
@@ -42,17 +46,17 @@ protocol/flows/src/
     ├── state.rs
     ├── checkpoint.rs
     ├── service_state.rs
-    ├── utxo.rs
+    ├── utxo_recovery.rs
     ├── pom.rs
     ├── scheduler.rs
     └── peer_caps.rs
 ```
 
-`compat.rs` is the main isolation boundary. Calls into Keryx consensus, storage and P2P APIs should be concentrated there whenever practical. When upstream APIs change, we update the compatibility layer instead of rewriting the IBD v2 core.
+`compat.rs` is the main isolation boundary. Calls into Keryx consensus, storage and P2P APIs should be concentrated there whenever practical. When upstream APIs change, update the compatibility layer instead of rewriting the IBD v2 core.
 
 ## Initial safety boundaries
 
-The first milestones must not change consensus validity rules.
+The early roadmap phases must not change consensus validity rules.
 
 Do not modify unless a later reviewed phase explicitly requires it:
 
@@ -63,24 +67,14 @@ Do not modify unless a later reviewed phase explicitly requires it:
 - block hashing or serialization
 - existing consensus commitments
 
-Early IBD v2 work is limited to:
-
-- instrumentation
-- persistence/checkpoints
-- resumable state transfer
-- download scheduling
-- database batching
-- peer capability discovery
-- transport selection
-
-All received data remains locally verified using normal Keryx consensus rules.
+IBD v2 work may change transfer orchestration, temporary persistence, checkpointing, batching, peer selection and transport, while all received data remains locally verified using normal Keryx consensus rules.
 
 ## Compatibility principle
 
 The transport source is never a source of trust.
 
 ```text
-remote peer / mirror
+remote peer / future mirror
         |
         v
 IBD v2 transport
@@ -95,7 +89,7 @@ local cryptographic verification
 normal Keryx consensus validation
         |
         v
-commit
+durable commit
 ```
 
 ## Activation strategy
@@ -106,40 +100,67 @@ IBD v2 remains disabled by default and is activated explicitly for development/t
 KERYX_IBD_V2=1
 ```
 
-Legacy IBD remains the fallback until IBD v2 has completed compatibility, restart/recovery, and adversarial testing.
+Legacy IBD remains the fallback until the roadmap deployment phase explicitly changes activation behavior.
 
-## Current development order
+## Canonical implementation order
 
-The v1.5.5 work order is intentionally strict:
+The project follows this order and must not silently renumber or reorder it:
 
-1. **Phase 0 — reproducible baseline:** complete; canonical RUN A frozen.
-2. **Phase 3 — persistent IBD state & recovery:** current phase.
-3. **Phase 1 — scheduler/adaptive budgets:** only after restart correctness is proven.
-4. **Phase 2 — throughput/download improvements:** only after scheduler safety.
-5. **Comparative benchmark:** repeat the same canonical test methodology against RUN A.
+1. **Phase 0 — IBD instrumentation**
+2. **Phase 1 — Resumable Service State synchronization**
+3. **Phase 2 — Resumable UTXO state synchronization**
+4. **Phase 3 — Independent IBD stage tracking**
+5. **Phase 4 — Database batching and validation**
+6. **Phase 5 — PoM-compatible IBD**
+7. **Phase 6 — Peer capability discovery**
+8. **Phase 7 — Multi-peer IBD scheduler**
+9. **Phase 8 — Content-addressed state chunks**
+10. **Phase 9 — Fast state distribution**
+11. **Phase 10 — NAT / CGNAT-compatible IBD**
+12. **Phase 11 — Recovery and adversarial testing**
+13. **Phase 12 — Performance validation**
+14. **Phase 13 — Progressive protocol deployment**
 
-Within Phase 3, implement and validate in this order:
+The detailed requirements and status of every phase live in `ROADMAP.md` / `ROADMAP-FR.md` and are authoritative.
 
-1. Durable stage/checkpoint schema with versioning and integrity checks.
-2. Atomic checkpoint persistence and safe load/rejection semantics.
-3. Resumable Service State progress.
-4. Resumable UTXO progress or a safe explicit restart boundary where partial UTXO import cannot yet be resumed.
-5. PoM/body progress boundaries that never advertise work beyond consensus-durable data.
-6. Crash/restart tests at each stage boundary.
-7. Corrupt/truncated/stale checkpoint adversarial tests.
+## Current status under the canonical roadmap
 
-## Deferred work
+- **Phase 0:** instrumentation is very advanced; direct fine-grained RocksDB latency instrumentation remains incomplete.
+- **Phase 1:** resumable Service State is implemented and CI-certified; real mainnet recovery testing remains pending.
+- **Phase 2:** resumable UTXO is implemented and CI-certified using a durable outpoint anchor compatible with v1.5.5 peers; real mainnet recovery testing remains pending.
+- **Phase 3:** independent UTXO and Service State tracking are wired; Headers, Pruning, PoM and Bodies still need equivalent effective stage tracking.
+- **Phase 4:** next only after Phase 3 implementation wiring is complete. Some atomic WriteBatch groundwork already exists but does not count as completion of Phase 4.
+- **Phase 5 and later:** do not begin early without an explicit roadmap decision.
 
-Do **not** introduce any of the following during Phase 3:
+## Immediate development rule
 
-- multi-peer/chunk scheduling
-- HTTP mirrors or alternate transports
-- speculative parallelism
-- peer racing
-- scheduler/adaptive budget optimization
-- benchmark-specific tuning
+While real nodes are unavailable, work that does not require live mainnet evidence should proceed in canonical order:
 
-RUN A shows that peer wait is a major performance issue, but correctness and durable restart semantics come first.
+```text
+finish Phase 3 stage tracking
+        |
+        v
+Phase 4 database/validation batching
+        |
+        v
+Phase 5 PoM compatibility
+        |
+        v
+Phase 6 peer capabilities
+        ...
+```
+
+Real crash/restart evidence for the already implemented Phase 1 and Phase 2 recovery paths is recorded when nodes become available and contributes to Phase 11 adversarial validation. It does not justify skipping the intervening implementation phases.
+
+## Runner policy
+
+All IBD v2 GitHub Actions certification for this project uses the dedicated local Windows runner only:
+
+```text
+[self-hosted, Windows, X64]
+```
+
+Do not switch to GitHub-hosted runners if the local runner is offline; jobs must remain queued instead.
 
 ## Non-goal
 
