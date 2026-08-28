@@ -5,12 +5,26 @@
 IBD v2 development is intentionally isolated from the rolling Keryx upstream branch.
 
 - Upstream repository: `Keryx-Labs/keryx-node`
-- Frozen baseline release: `v1.5.4`
-- Frozen baseline commit: `e97dc268b2f7eb16ae761a37c79080a5c5c46ddc`
-- Immutable baseline branch: `ibd-v2-base-v1.5.4`
-- Development branch: `ibd-v2`
+- Frozen upstream release: `v1.5.5`
+- Frozen upstream commit: `bb408d54ca3992f7f9f4e269507f7603c234d24d`
+- Immutable upstream baseline branch: `ibd-v2-base-v1.5.5`
+- Validated integration branch: `ibd-v2-integrate-v1.5.5`
+- Phase 3 development branch: `ibd-v2-phase3-persistent-state`
+- Canonical RUN A report: `docs/ibd-v2/RUN-A-BASELINE-v1.5.5.md`
 
-The baseline branch is an anchor only. No IBD v2 development commits should ever be added to it.
+The baseline/reference branches are anchors only. No Phase 3 development commits should ever be added to them.
+
+## Canonical RUN A
+
+The v1.5.5 RUN A baseline is frozen before Phase 3 work begins.
+
+- IBD v2 behavior: disabled (`KERYX_IBD_V2=0`)
+- IBD v2 metrics: enabled (`KERYX_IBD_V2_METRICS=1`)
+- Fresh mainnet datadir
+- Default Keryx RAM/cache/network/peer settings
+- Time to final live synchronization on the baseline host: **95.17 minutes**
+
+The baseline identified peer wait as the dominant PoM body-sync bottleneck, but throughput/scheduler work is deliberately deferred until persistence and recovery are correct.
 
 ## Design rule
 
@@ -52,9 +66,9 @@ Do not modify unless a later reviewed phase explicitly requires it:
 Early IBD v2 work is limited to:
 
 - instrumentation
-- download scheduling
 - persistence/checkpoints
 - resumable state transfer
+- download scheduling
 - database batching
 - peer capability discovery
 - transport selection
@@ -86,29 +100,46 @@ commit
 
 ## Activation strategy
 
-IBD v2 should initially be disabled by default and activated explicitly for development/testing.
-
-Suggested runtime gate:
+IBD v2 remains disabled by default and is activated explicitly for development/testing.
 
 ```text
 KERYX_IBD_V2=1
 ```
 
-Legacy IBD remains available as the fallback until IBD v2 has completed compatibility and adversarial testing.
+Legacy IBD remains the fallback until IBD v2 has completed compatibility, restart/recovery, and adversarial testing.
 
-## Development order
+## Current development order
 
-1. Instrument current IBD and establish a v1.5.4 baseline.
-2. Add the isolated `ibd_v2` module and compatibility layer.
-3. Implement resumable Service State transfer.
-4. Implement resumable UTXO transfer.
-5. Add independent IBD stage state/checkpoints.
-6. Batch consensus/database reads.
-7. Add PoM-aware state and peer selection.
-8. Add peer capability discovery.
-9. Add multi-peer scheduling.
-10. Add content-addressed state chunks.
-11. Add optional alternate transports only after P2P correctness is proven.
+The v1.5.5 work order is intentionally strict:
+
+1. **Phase 0 — reproducible baseline:** complete; canonical RUN A frozen.
+2. **Phase 3 — persistent IBD state & recovery:** current phase.
+3. **Phase 1 — scheduler/adaptive budgets:** only after restart correctness is proven.
+4. **Phase 2 — throughput/download improvements:** only after scheduler safety.
+5. **Comparative benchmark:** repeat the same canonical test methodology against RUN A.
+
+Within Phase 3, implement and validate in this order:
+
+1. Durable stage/checkpoint schema with versioning and integrity checks.
+2. Atomic checkpoint persistence and safe load/rejection semantics.
+3. Resumable Service State progress.
+4. Resumable UTXO progress or a safe explicit restart boundary where partial UTXO import cannot yet be resumed.
+5. PoM/body progress boundaries that never advertise work beyond consensus-durable data.
+6. Crash/restart tests at each stage boundary.
+7. Corrupt/truncated/stale checkpoint adversarial tests.
+
+## Deferred work
+
+Do **not** introduce any of the following during Phase 3:
+
+- multi-peer/chunk scheduling
+- HTTP mirrors or alternate transports
+- speculative parallelism
+- peer racing
+- scheduler/adaptive budget optimization
+- benchmark-specific tuning
+
+RUN A shows that peer wait is a major performance issue, but correctness and durable restart semantics come first.
 
 ## Non-goal
 
