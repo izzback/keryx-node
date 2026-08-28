@@ -17,7 +17,12 @@ on:
       - 'protocol/flows/Cargo.toml'
       - 'protocol/p2p/proto/**'
       - 'protocol/p2p/src/convert/messages.rs'
+      - 'consensus/src/consensus/mod.rs'
+      - 'consensus/src/model/stores/service_*.rs'
+      - 'consensus/src/model/stores/utxo_set.rs'
+      - 'components/consensusmanager/src/**'
       - 'keryxd/src/daemon.rs'
+      - 'scripts/ibd-v2/phase3/**'
       - 'docs/ibd-v2/**'
   workflow_dispatch:
 
@@ -30,9 +35,9 @@ concurrency:
 
 jobs:
   phase3:
-    name: Phase 3 persistence and recovery gate
+    name: Phase 3 persistence, recovery and real-test gate
     runs-on: [self-hosted, Windows, X64]
-    timeout-minutes: 60
+    timeout-minutes: 90
     defaults:
       run:
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File {0}
@@ -91,7 +96,7 @@ jobs:
           & (Join-Path $cargoBin 'rustc.exe') --version --verbose
           & (Join-Path $cargoBin 'cargo.exe') --version
 
-      - name: Check formatting of IBD v2 touch points
+      - name: Check formatting of Phase 3 touch points
         run: |
           $files = @(
             (Get-ChildItem 'protocol/flows/src/ibd_v2' -Filter '*.rs' -File | ForEach-Object FullName)
@@ -101,6 +106,9 @@ jobs:
             (Resolve-Path 'protocol/flows/src/flow_context.rs').Path
             (Resolve-Path 'protocol/flows/src/v7/request_service_state.rs').Path
             (Resolve-Path 'protocol/p2p/src/convert/messages.rs').Path
+            (Resolve-Path 'consensus/src/consensus/mod.rs').Path
+            (Get-ChildItem 'consensus/src/model/stores' -Filter 'service_*.rs' -File | ForEach-Object FullName)
+            (Resolve-Path 'consensus/src/model/stores/utxo_set.rs').Path
             (Resolve-Path 'keryxd/src/daemon.rs').Path
           )
           & rustfmt --edition 2024 --check $files
@@ -108,6 +116,9 @@ jobs:
 
       - name: Check P2P wire crate
         run: cargo check -p keryx-p2p-lib --all-targets
+
+      - name: Check consensus crate
+        run: cargo check -p keryx-consensus --all-targets
 
       - name: Check P2P flows crate
         run: cargo check -p keryx-p2p-flows --all-targets
@@ -118,5 +129,47 @@ jobs:
       - name: Clippy P2P flows crate
         run: cargo clippy -p keryx-p2p-flows --all-targets --no-deps -- -D warnings -A clippy::collapsible_if
 
-      - name: Test P2P flows crate
+      - name: Test P2P flows recovery suite
         run: cargo test -p keryx-p2p-flows
+
+      - name: Build release real-test node
+        run: |
+          cargo build --release -p keryxd
+          if ($LASTEXITCODE -ne 0) { throw "release build failed with exit code $LASTEXITCODE" }
+
+      - name: Package certified real-test node
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $sha = (git rev-parse HEAD).Trim()
+          $short = $sha.Substring(0, 8)
+          $exe = Join-Path $PWD 'target\release\keryxd.exe'
+          if (!(Test-Path -LiteralPath $exe)) { throw 'release keryxd.exe not found' }
+          $out = Join-Path $PWD 'phase3-realtest-artifact'
+          if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          Copy-Item -LiteralPath $exe -Destination (Join-Path $out 'keryxd.exe')
+          if (Test-Path 'scripts\ibd-v2\phase3') {
+            Copy-Item 'scripts\ibd-v2\phase3\*.ps1' $out -ErrorAction SilentlyContinue
+            if (Test-Path 'scripts\ibd-v2\phase3\README-PHASE3-REALTEST.txt') {
+              Copy-Item 'scripts\ibd-v2\phase3\README-PHASE3-REALTEST.txt' $out
+            }
+          }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath $exe).Hash.ToLowerInvariant()
+          @(
+            'project=Keryx IBD V2 Phase 3',
+            "commit=$sha",
+            "short_commit=$short",
+            'base_official=bb408d54ca3992f7f9f4e269507f7603c234d24d',
+            'runner=Keryx-Node-Windows-01',
+            'ibd_v2_default=off',
+            "keryxd_sha256=$hash"
+          ) | Set-Content -Encoding ASCII -LiteralPath (Join-Path $out 'BUILD-MANIFEST.txt')
+          Write-Host "Certified Phase 3 keryxd SHA256: $hash"
+
+      - name: Upload certified Phase 3 real-test package
+        uses: actions/upload-artifact@v4
+        with:
+          name: keryx-ibd-v2-phase3-realtest-${{ github.sha }}
+          path: phase3-realtest-artifact
+          if-no-files-found: error
+          retention-days: 14
