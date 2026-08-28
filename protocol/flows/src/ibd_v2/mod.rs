@@ -8,6 +8,7 @@ pub mod checkpoint;
 pub mod compat;
 pub mod metrics;
 pub mod service_state;
+pub mod service_state_spool;
 pub mod state;
 
 /// Runtime opt-in used while IBD v2 is experimental.
