@@ -77,11 +77,7 @@ impl IbdCheckpointV1 {
             if let Some(total) = progress.total_units
                 && progress.completed_units > total
             {
-                return Err(CheckpointError::ProgressOutOfRange {
-                    stage: progress.stage,
-                    completed: progress.completed_units,
-                    total,
-                });
+                return Err(CheckpointError::ProgressOutOfRange { stage: progress.stage, completed: progress.completed_units, total });
             }
         }
 
@@ -296,14 +292,7 @@ fn replace_file_atomic(replacement: &Path, target: &Path) -> io::Result<()> {
     let replaced: Vec<u16> = target.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
     let replacement: Vec<u16> = replacement.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
     let result = unsafe {
-        ReplaceFileW(
-            replaced.as_ptr(),
-            replacement.as_ptr(),
-            std::ptr::null(),
-            0,
-            std::ptr::null_mut(),
-            std::ptr::null_mut(),
-        )
+        ReplaceFileW(replaced.as_ptr(), replacement.as_ptr(), std::ptr::null(), 0, std::ptr::null_mut(), std::ptr::null_mut())
     };
     if result == 0 { Err(io::Error::last_os_error()) } else { Ok(()) }
 }
@@ -325,7 +314,7 @@ fn sync_parent_directory(_parent: &Path) -> io::Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CheckpointError, IbdCheckpointV1, HEADER_LEN, load_validated, save_atomic};
+    use super::{CheckpointError, HEADER_LEN, IbdCheckpointV1, load_validated, save_atomic};
     use crate::ibd_v2::state::{ServiceStateResumeMetadata, Stage, StageProgress, StageStatus};
     use keryx_hashes::Hash;
     use std::{fs, path::PathBuf};
