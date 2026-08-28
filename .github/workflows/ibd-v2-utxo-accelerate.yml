@@ -33,12 +33,13 @@ jobs:
           fetch-depth: 0
           clean: true
 
-      - name: PowerShell 5.1 compatibility fix
+      - name: Bootstrap accelerator compatibility fixes
         run: |
           $path = '.github\dev\APPLY-IBD-V2-UTXO-RECOVERY.ps1'
           $text = [IO.File]::ReadAllText((Resolve-Path $path))
           $text = $text.Replace('in $Path: $StartMarker', 'in ${Path}: $StartMarker')
           $text = $text.Replace('in $Path: $EndMarker', 'in ${Path}: $EndMarker')
+          $text = $text.Replace('recovery.as_deref_mut()', 'recovery.as_mut()')
           [IO.File]::WriteAllText((Resolve-Path $path), $text, (New-Object System.Text.UTF8Encoding($false)))
 
       - name: Apply and certify UTXO recovery
