@@ -111,6 +111,7 @@ jobs:
             (Resolve-Path 'protocol/p2p/src/convert/messages.rs').Path
             (Resolve-Path 'consensus/src/consensus/mod.rs').Path
             (Get-ChildItem 'consensus/src/model/stores' -Filter 'service_*.rs' -File | ForEach-Object FullName)
+            (Resolve-Path 'consensus/src/model/stores/utxo_set.rs').Path
             (Resolve-Path 'keryxd/src/daemon.rs').Path
           )
           & rustfmt --edition 2024 --check --config skip_children=true $files
