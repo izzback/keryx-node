@@ -111,11 +111,18 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
-          Remove-Item '.github/scripts/apply-phase3-service-state-resume.ps1' -Force
-          Remove-Item '.github/workflows/ibd-v2-phase3-apply.yml' -Force
+          # The GitHub Actions token may write repository contents but not workflow files.
+          # Keep both one-shot files and the permanent gate exactly as they exist in HEAD;
+          # they will be cleaned/updated by the GitHub connector after this certified code push.
+          git restore --source=HEAD -- '.github/workflows/ibd-v2-phase3-windows.yml'
           git config user.name 'izzback'
           git config user.email 'poolarismining1@gmail.com'
-          git add -A
+          git add -- `
+            'keryxd/src/daemon.rs' `
+            'protocol/flows/src/flow_context.rs' `
+            'protocol/flows/src/ibd/flow.rs' `
+            'protocol/flows/src/ibd_v2/mod.rs' `
+            'protocol/flows/src/ibd_v2/service_state_recovery.rs'
           git status --short
           if (-not (git diff --cached --quiet)) {
             git commit -m 'feat(ibd-v2): resume durable service-state downloads'
