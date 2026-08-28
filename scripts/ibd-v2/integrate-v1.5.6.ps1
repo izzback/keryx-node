@@ -38,7 +38,8 @@ if ($mergeExit -ne 0) {
 
         $safe = ($path -replace '[^A-Za-z0-9_.-]', '_')
         $patch = Join-Path $env:RUNNER_TEMP "ibd-v2-$safe.patch"
-        git diff --binary $base155 $ibdPhase3 -- $path | Out-File -FilePath $patch -Encoding utf8
+        $patchLines = @(git diff --binary $base155 $ibdPhase3 -- $path)
+        [IO.File]::WriteAllLines($patch, $patchLines, (New-Object System.Text.UTF8Encoding($false)))
         if ((Get-Item $patch).Length -gt 0) {
             git apply --3way --index $patch
             if ($LASTEXITCODE -ne 0) {
@@ -87,8 +88,8 @@ if ($flow -notmatch 'ServiceStateRecovery' -or $flow -notmatch 'UtxoRecovery' -o
     throw 'IBD v2 recovery/stage tracking hooks were lost during v1.5.6 integration'
 }
 
-# Update the frozen active upstream reference in project docs without rewriting
-# the historical RUN A v1.5.5 baseline report.
+# Update the active upstream development reference without rewriting the
+# historical RUN A v1.5.5 baseline report.
 $roadmapPath = 'docs/ibd-v2/ROADMAP.md'
 if (Test-Path $roadmapPath) {
     $roadmap = Get-Content -Raw $roadmapPath
