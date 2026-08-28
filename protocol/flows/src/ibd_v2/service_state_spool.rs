@@ -268,9 +268,8 @@ fn scan_records(
             return Err(ServiceStateSpoolError::ChunkTooLarge(payload_len));
         }
 
-        let record_len = (RECORD_HEADER_LEN as u64)
-            .checked_add(payload_len as u64)
-            .ok_or(ServiceStateSpoolError::ChunkTooLarge(payload_len))?;
+        let record_len =
+            (RECORD_HEADER_LEN as u64).checked_add(payload_len as u64).ok_or(ServiceStateSpoolError::ChunkTooLarge(payload_len))?;
         if remaining < record_len {
             truncate_tail(file, offset, repair_truncated_tail)?;
             truncated = true;
@@ -284,7 +283,8 @@ fn scan_records(
             return Err(ServiceStateSpoolError::RecordChecksumMismatch { offset });
         }
         validate_payload_shape(&payload, row_count)?;
-        let rows: Vec<Vec<u8>> = borsh::from_slice(&payload).map_err(|error| ServiceStateSpoolError::PayloadDecode(error.to_string()))?;
+        let rows: Vec<Vec<u8>> =
+            borsh::from_slice(&payload).map_err(|error| ServiceStateSpoolError::PayloadDecode(error.to_string()))?;
         if rows.len() != row_count as usize {
             return Err(ServiceStateSpoolError::InvalidPayloadShape);
         }
@@ -501,10 +501,7 @@ mod tests {
         let path = test_path();
         drop(ServiceStateSpool::open(&path, hash(1), hash(2)).unwrap());
         assert!(matches!(ServiceStateSpool::open(&path, hash(9), hash(2)), Err(ServiceStateSpoolError::WrongGenesis { .. })));
-        assert!(matches!(
-            ServiceStateSpool::open(&path, hash(1), hash(9)),
-            Err(ServiceStateSpoolError::WrongPruningPoint { .. })
-        ));
+        assert!(matches!(ServiceStateSpool::open(&path, hash(1), hash(9)), Err(ServiceStateSpoolError::WrongPruningPoint { .. })));
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }
 
