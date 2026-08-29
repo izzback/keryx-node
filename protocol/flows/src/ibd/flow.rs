@@ -4,6 +4,7 @@ use crate::{
     ibd::{HeadersChunkStream, TrustedEntryStream, negotiate::ChainNegotiationOutput},
     ibd_v2::{
         metrics::{StageMetrics, metrics_enabled},
+        pom_plan::{PomBodyPlan, classify_pom_body},
         service_state::ServiceStateWireTracker,
         service_state_recovery::ServiceStateRecovery,
         stage_tracking::IbdStageTracker,
@@ -1718,20 +1719,36 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             if block.is_header_only() {
                 return Err(ProtocolError::OtherOwned(format!("sent header of {} where expected block with body", block.hash())));
             }
-            if high_daa.saturating_sub(block.header.daa_score) > POM_PROOF_SERVE_DEPTH_DAA {
-                if metrics_enabled() && block.pom_proof.is_some() {
-                    pom.discarded_historical_proofs = pom.discarded_historical_proofs.saturating_add(1);
+            let historical_outside_retention = high_daa.saturating_sub(block.header.daa_score) > POM_PROOF_SERVE_DEPTH_DAA;
+            let pom_plan =
+                classify_pom_body(self.ctx.config.pom_activation.is_active(block.header.daa_score), block.header.daa_score, high_daa);
+            match pom_plan {
+                PomBodyPlan::HistoricalPomTierOnly => {
+                    if metrics_enabled() && block.pom_proof.is_some() {
+                        pom.discarded_historical_proofs = pom.discarded_historical_proofs.saturating_add(1);
+                    }
+                    block.pom_tier = block.pom_tier.or_else(|| block.pom_proof.as_ref().map(|p| p.tier));
+                    block.pom_proof = None;
                 }
-                block.pom_tier = block.pom_tier.or_else(|| block.pom_proof.as_ref().map(|p| p.tier));
-                block.pom_proof = None;
-            } else if block.pom_proof.is_none() && self.ctx.config.pom_activation.is_active(block.header.daa_score) {
-                // The syncer served a block naked while it is still within OUR proof service
-                // window: persisting it as-is would make us the next contagion source. Queue it
-                // for the relay flow to re-fetch the proof from another peer.
-                self.ctx.enqueue_pom_reproof(block.hash());
-                if metrics_enabled() {
-                    pom.reproofs_queued = pom.reproofs_queued.saturating_add(1);
+                PomBodyPlan::RecentPomProofRequired if block.pom_proof.is_none() => {
+                    // The syncer served a block naked while it is still within OUR proof service
+                    // window: persisting it as-is would make us the next contagion source. Queue it
+                    // for the relay flow to re-fetch the proof from another peer.
+                    self.ctx.enqueue_pom_reproof(block.hash());
+                    if metrics_enabled() {
+                        pom.reproofs_queued = pom.reproofs_queued.saturating_add(1);
+                    }
                 }
+                PomBodyPlan::PrePom if historical_outside_retention => {
+                    // Preserve the pre-Phase-5 retention behavior for unsolicited PoM data on a
+                    // pre-PoM block: old blocks outside the serve horizon never retain the proof.
+                    if metrics_enabled() && block.pom_proof.is_some() {
+                        pom.discarded_historical_proofs = pom.discarded_historical_proofs.saturating_add(1);
+                    }
+                    block.pom_tier = block.pom_tier.or_else(|| block.pom_proof.as_ref().map(|p| p.tier));
+                    block.pom_proof = None;
+                }
+                PomBodyPlan::PrePom | PomBodyPlan::RecentPomProofRequired => {}
             }
             current_daa_score = block.header.daa_score;
             current_timestamp = block.header.timestamp;
@@ -1805,24 +1822,38 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             if blk_body.is_empty() {
                 return Err(ProtocolError::OtherOwned(format!("sent empty block body for block {}", expected_hash)));
             }
-            let (pom_proof, pom_tier) = if high_daa.saturating_sub(blk_header.daa_score) > POM_PROOF_SERVE_DEPTH_DAA {
-                {
+            let historical_outside_retention = high_daa.saturating_sub(blk_header.daa_score) > POM_PROOF_SERVE_DEPTH_DAA;
+            let pom_plan =
+                classify_pom_body(self.ctx.config.pom_activation.is_active(blk_header.daa_score), blk_header.daa_score, high_daa);
+            let (pom_proof, pom_tier) = match pom_plan {
+                PomBodyPlan::HistoricalPomTierOnly => {
                     if metrics_enabled() && pom_proof.is_some() {
                         pom.discarded_historical_proofs = pom.discarded_historical_proofs.saturating_add(1);
                         pom.discarded_historical_bytes = pom.discarded_historical_bytes.saturating_add(proof_bytes);
                     }
                     (None, pom_tier.or_else(|| pom_proof.as_ref().map(|p| p.tier)))
                 }
-            } else {
-                if pom_proof.is_none() && self.ctx.config.pom_activation.is_active(blk_header.daa_score) {
-                    // Naked-recent from the syncer — queue for the relay flow's proof re-fetch
-                    // (see the full-block chunk path above).
-                    self.ctx.enqueue_pom_reproof(blk_header.hash);
-                    if metrics_enabled() {
-                        pom.reproofs_queued = pom.reproofs_queued.saturating_add(1);
+                PomBodyPlan::RecentPomProofRequired => {
+                    if pom_proof.is_none() {
+                        // Naked-recent from the syncer — queue for the relay flow's proof re-fetch
+                        // (see the full-block chunk path above).
+                        self.ctx.enqueue_pom_reproof(blk_header.hash);
+                        if metrics_enabled() {
+                            pom.reproofs_queued = pom.reproofs_queued.saturating_add(1);
+                        }
                     }
+                    (pom_proof, pom_tier)
                 }
-                (pom_proof, pom_tier)
+                PomBodyPlan::PrePom if historical_outside_retention => {
+                    // Preserve the pre-Phase-5 retention behavior for unsolicited PoM data on a
+                    // pre-PoM block: old bodies outside the serve horizon never retain the proof.
+                    if metrics_enabled() && pom_proof.is_some() {
+                        pom.discarded_historical_proofs = pom.discarded_historical_proofs.saturating_add(1);
+                        pom.discarded_historical_bytes = pom.discarded_historical_bytes.saturating_add(proof_bytes);
+                    }
+                    (None, pom_tier.or_else(|| pom_proof.as_ref().map(|p| p.tier)))
+                }
+                PomBodyPlan::PrePom => (pom_proof, pom_tier),
             };
             let block = Block { header: blk_header, transactions: blk_body.into(), pom_proof, pom_tier };
             current_daa_score = block.header.daa_score;
