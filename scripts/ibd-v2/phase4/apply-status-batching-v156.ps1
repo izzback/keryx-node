@@ -75,7 +75,6 @@ Replace-Exact -Path $apiPath -Old @'
 '@
 
 Replace-Exact -Path $consensusPath -Old @'
-    fn get_ghostdag_data_batch(&self, hashes: Vec<Hash>) -> ConsensusResult<Vec<ExternalGhostdagData>> {
         for &hash in &hashes {
             match self.get_block_status(hash) {
                 None => return Err(ConsensusError::HeaderNotFound(hash)),
@@ -83,10 +82,7 @@ Replace-Exact -Path $consensusPath -Old @'
                 _ => {}
             }
         }
-
-        let (ghostdag_batch, _, _) = self.ghostdag_store.get_data_batch(&hashes).unwrap();
 '@ -New @'
-    fn get_ghostdag_data_batch(&self, hashes: Vec<Hash>) -> ConsensusResult<Vec<ExternalGhostdagData>> {
         for (&hash, status) in hashes.iter().zip(self.get_block_statuses(&hashes)) {
             match status {
                 None => return Err(ConsensusError::HeaderNotFound(hash)),
@@ -94,8 +90,6 @@ Replace-Exact -Path $consensusPath -Old @'
                 _ => {}
             }
         }
-
-        let (ghostdag_batch, _, _) = self.ghostdag_store.get_data_batch(&hashes).unwrap();
 '@
 
 Replace-Exact -Path $consensusPath -Old @'
