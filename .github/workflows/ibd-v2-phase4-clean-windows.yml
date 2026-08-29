@@ -1,6 +1,6 @@
-name: Keryx IBD v2 Phase 4.1 Clean Windows
+name: Keryx IBD v2 Phase 4.2 Clean Windows
 
-# Reproducible certification of the already-published Phase 4.1 functional commit.
+# Reproducible certification of the already-published Phase 4.2 functional commit.
 # Project policy: local/self-hosted Windows runner only.
 
 on:
@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   clean-certify:
-    name: Clean certify Phase 4.1 functional commit
+    name: Clean certify Phase 4.2 functional commit
     runs-on: [self-hosted, Windows, X64]
     timeout-minutes: 120
     defaults:
@@ -28,29 +28,29 @@ jobs:
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File {0}
 
     steps:
-      - name: Checkout exact Phase 4.1 functional commit
+      - name: Checkout exact Phase 4.2 functional commit
         uses: actions/checkout@v4
         with:
-          ref: c1e69e56154fe7f762856aaa8f7e5dce6261d673
+          ref: 37801a265330f1131eabf07ff1d7b48c231fffa6
           fetch-depth: 0
           clean: true
 
       - name: Verify exact clean source tree
         run: |
           $ErrorActionPreference = 'Stop'
-          $expected = 'c1e69e56154fe7f762856aaa8f7e5dce6261d673'
+          $expected = '37801a265330f1131eabf07ff1d7b48c231fffa6'
           $actual = (git rev-parse HEAD).Trim()
-          if ($actual -ne $expected) { throw "wrong Phase 4.1 source commit: $actual" }
+          if ($actual -ne $expected) { throw "wrong Phase 4.2 source commit: $actual" }
           $dirty = @(git status --porcelain --untracked-files=no)
           if ($dirty.Count -ne 0) { throw "tracked source tree is dirty before certification: $($dirty -join '; ')" }
-          Write-Host "PHASE4_FUNCTIONAL_COMMIT=$actual"
+          Write-Host "PHASE4_2_FUNCTIONAL_COMMIT=$actual"
 
       - name: Install protoc 29.6
         run: |
           $ErrorActionPreference = 'Stop'
           $protocVersion = '29.6'
-          $archive = Join-Path $env:RUNNER_TEMP "protoc-$protocVersion-phase4-clean-win64.zip"
-          $installDir = Join-Path $env:RUNNER_TEMP "protoc-$protocVersion-phase4-clean"
+          $archive = Join-Path $env:RUNNER_TEMP "protoc-$protocVersion-phase42-clean-win64.zip"
+          $installDir = Join-Path $env:RUNNER_TEMP "protoc-$protocVersion-phase42-clean"
           $url = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/protoc-$protocVersion-win64.zip"
           if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
           New-Item -ItemType Directory -Path $installDir -Force | Out-Null
@@ -65,10 +65,10 @@ jobs:
       - name: Install Rust 1.93.0 natively
         run: |
           $ErrorActionPreference = 'Stop'
-          $rustRoot = Join-Path $env:RUNNER_TEMP 'rust-1.93.0-phase4-clean'
+          $rustRoot = Join-Path $env:RUNNER_TEMP 'rust-1.93.0-phase42-clean'
           $cargoHome = Join-Path $rustRoot 'cargo'
           $rustupHome = Join-Path $rustRoot 'rustup'
-          $rustupInit = Join-Path $env:RUNNER_TEMP 'rustup-init-phase4-clean.exe'
+          $rustupInit = Join-Path $env:RUNNER_TEMP 'rustup-init-phase42-clean.exe'
           $rustupUrl = 'https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe'
           if (Test-Path $rustRoot) { Remove-Item $rustRoot -Recurse -Force }
           New-Item -ItemType Directory -Path $rustRoot -Force | Out-Null
@@ -86,28 +86,21 @@ jobs:
           & (Join-Path $cargoBin 'rustc.exe') --version --verbose
           & (Join-Path $cargoBin 'cargo.exe') --version
 
-      - name: Verify Phase 4.1 formatting and diff hygiene
+      - name: Verify Phase 4.2 formatting and diff hygiene
         run: |
           $ErrorActionPreference = 'Stop'
-          $normalFiles = @(
-            'consensus/core/src/api/mod.rs',
-            'consensus/src/processes/sync/mod.rs',
-            'components/consensusmanager/src/session.rs',
-            'protocol/flows/src/ibd/flow.rs'
-          )
-          foreach ($file in $normalFiles) {
+          rustfmt --edition 2024 --check --config skip_children=true consensus/core/src/api/mod.rs
+          if ($LASTEXITCODE -ne 0) { throw 'rustfmt check failed for consensus/core/src/api/mod.rs' }
+          rustfmt --edition 2024 --check --config skip_children=true consensus/src/consensus/mod.rs
+          if ($LASTEXITCODE -ne 0) { throw 'rustfmt check failed for consensus/src/consensus/mod.rs' }
+          foreach ($file in @('components/consensusmanager/src/session.rs', 'protocol/flows/src/ibd/flow.rs')) {
             rustfmt --edition 2024 --check $file
             if ($LASTEXITCODE -ne 0) { throw "rustfmt check failed for $file" }
           }
-          # This module root owns pre-existing v1.5.6 children (storage.rs/test_consensus.rs) that
-          # are outside Phase 4.1 and are not rustfmt-clean. Check mod.rs itself without recursively
-          # formatting those untouched children.
-          rustfmt --edition 2024 --check --config skip_children=true consensus/src/consensus/mod.rs
-          if ($LASTEXITCODE -ne 0) { throw 'rustfmt check failed for consensus/src/consensus/mod.rs' }
           git diff --check
           if ($LASTEXITCODE -ne 0) { throw 'git diff --check failed' }
 
-      - name: Compile Phase 4.1 targets
+      - name: Compile Phase 4.2 targets
         run: |
           $ErrorActionPreference = 'Stop'
           cargo check -p keryx-consensus-core --all-targets
@@ -121,7 +114,7 @@ jobs:
           cargo check -p keryxd --all-targets
           if ($LASTEXITCODE -ne 0) { throw 'keryxd check failed' }
 
-      - name: Clippy Phase 4.1 touched consumers
+      - name: Clippy Phase 4.2 touched consumers
         run: |
           $ErrorActionPreference = 'Stop'
           cargo clippy -p keryx-consensusmanager --all-targets --no-deps -- -D warnings
@@ -131,7 +124,7 @@ jobs:
           cargo clippy -p keryx-p2p-flows --all-targets --no-deps -- -D warnings -A clippy::type-complexity -A clippy::collapsible-if
           if ($LASTEXITCODE -ne 0) { throw 'p2p-flows Clippy failed' }
 
-      - name: Run Phase 4.1 regressions
+      - name: Run Phase 4.2 regressions
         run: |
           $ErrorActionPreference = 'Stop'
           cargo test -p keryx-p2p-flows ibd_v2
@@ -139,13 +132,23 @@ jobs:
           cargo test -p keryx-consensus pruning_point_utxo_import_replay_is_idempotent
           if ($LASTEXITCODE -ne 0) { throw 'UTXO replay regression failed' }
 
-      - name: Guard v1.5.6 IBD integrations
+      - name: Guard Phase 4.2 integrations
         run: |
           $ErrorActionPreference = 'Stop'
           $flow = [IO.File]::ReadAllText((Resolve-Path 'protocol/flows/src/ibd/flow.rs'))
-          foreach ($needle in @('decode_pom_proof', 'pom_proof_min_daa', 'ServiceStateRecovery', 'UtxoRecovery', 'IbdStageTracker', 'get_missing_block_body_hashes_batch')) {
-            if (-not $flow.Contains($needle)) { throw "Phase 4.1 / v1.5.6 guard lost: $needle" }
+          foreach ($needle in @('decode_pom_proof', 'pom_proof_min_daa', 'ServiceStateRecovery', 'UtxoRecovery', 'IbdStageTracker', 'get_missing_block_body_hashes_batch', 'async_get_headers')) {
+            if (-not $flow.Contains($needle)) { throw "Phase 4.2 / v1.5.6 guard lost: $needle" }
           }
+          if (([regex]::Matches($flow, 'async_get_headers\(')).Count -ne 2) {
+            throw 'Phase 4.2 must contain exactly two body-sync async_get_headers calls'
+          }
+          if ($flow.Contains('TODO (relaxed): make header queries in a batch.')) {
+            throw 'old per-block header batching TODO is still present'
+          }
+          $api = [IO.File]::ReadAllText((Resolve-Path 'consensus/core/src/api/mod.rs'))
+          if (-not $api.Contains('fn get_headers(&self, hashes: Vec<Hash>)')) { throw 'ConsensusApi get_headers guard missing' }
+          $session = [IO.File]::ReadAllText((Resolve-Path 'components/consensusmanager/src/session.rs'))
+          if (-not $session.Contains('pub async fn async_get_headers')) { throw 'async_get_headers session guard missing' }
 
       - name: Build release node
         run: |
@@ -157,30 +160,32 @@ jobs:
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'target\release\keryxd.exe').Hash.ToLowerInvariant()
           Write-Host "keryxd.exe SHA256=$hash"
 
-      - name: Package canonical Phase 4.1 node
+      - name: Package canonical Phase 4.2 node
         run: |
           $ErrorActionPreference = 'Stop'
-          $functional = 'c1e69e56154fe7f762856aaa8f7e5dce6261d673'
-          $out = Join-Path $PWD 'ibd-v2-phase4-clean-artifact'
+          $phase41 = 'c1e69e56154fe7f762856aaa8f7e5dce6261d673'
+          $phase42 = '37801a265330f1131eabf07ff1d7b48c231fffa6'
+          $out = Join-Path $PWD 'ibd-v2-phase42-clean-artifact'
           if (Test-Path $out) { Remove-Item $out -Recurse -Force }
           New-Item -ItemType Directory -Path $out -Force | Out-Null
           Copy-Item 'target\release\keryxd.exe' (Join-Path $out 'keryxd.exe')
           $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'target\release\keryxd.exe').Hash.ToLowerInvariant()
           @(
-            'project=Keryx IBD V2 Phase 4.1',
+            'project=Keryx IBD V2 Phase 4.2',
             'upstream_version=1.5.6',
             'official_upstream_commit=a8e23793363c509325881f6146176f39bf52f77f',
             'ibd_v2_v156_base=5cf2a494c1a54348f51fb560928fe473fdef08a4',
-            "phase4_functional_commit=$functional",
+            "phase4_1_functional_commit=$phase41",
+            "phase4_2_functional_commit=$phase42",
             'certification=clean-exact-commit',
             'runner=Keryx-Node-Windows-01',
             "keryxd_sha256=$hash"
           ) | Set-Content -Encoding ASCII -LiteralPath (Join-Path $out 'BUILD-MANIFEST.txt')
 
-      - name: Upload canonical Phase 4.1 node
+      - name: Upload canonical Phase 4.2 node
         uses: actions/upload-artifact@v4
         with:
-          name: keryx-ibd-v2-phase4.1-clean-c1e69e56154fe7f762856aaa8f7e5dce6261d673
-          path: ibd-v2-phase4-clean-artifact
+          name: keryx-ibd-v2-phase4.2-clean-37801a265330f1131eabf07ff1d7b48c231fffa6
+          path: ibd-v2-phase42-clean-artifact
           if-no-files-found: error
           retention-days: 14
