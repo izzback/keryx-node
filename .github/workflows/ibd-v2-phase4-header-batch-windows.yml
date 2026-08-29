@@ -10,6 +10,7 @@ on:
     paths:
       - '.github/workflows/ibd-v2-phase4-header-batch-windows.yml'
       - 'scripts/ibd-v2/phase4/apply-header-batching-v156.ps1'
+      - 'scripts/ibd-v2/phase4/run-header-batching-v156.ps1'
   workflow_dispatch:
 
 permissions:
@@ -78,7 +79,7 @@ jobs:
           & (Join-Path $cargoBin 'cargo.exe') --version
 
       - name: Apply and certify Phase 4.2 candidate
-        run: .\scripts\ibd-v2\phase4\apply-header-batching-v156.ps1
+        run: .\scripts\ibd-v2\phase4\run-header-batching-v156.ps1
 
       - name: Package Phase 4.2 candidate
         if: success()
