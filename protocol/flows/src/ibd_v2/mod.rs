@@ -9,6 +9,7 @@ pub mod compat;
 pub mod fault_injection;
 pub mod metrics;
 pub mod pom_plan;
+pub mod pom_reproof_recovery;
 pub mod service_state;
 pub mod service_state_recovery;
 pub mod service_state_spool;
