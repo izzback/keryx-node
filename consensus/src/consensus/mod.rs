@@ -347,13 +347,11 @@ impl Consensus {
         // anchor plus the burnable-window warmup) must stay above the pruning floor, or a fresh
         // node would silently rebuild a truncated vault → divergent burns.
         assert!(
-            this.config.params.finality_depth()
-                + keryx_consensus_core::collateral::SERVICE_BURNABLE_WINDOW_DAA
-                <= this.config.pruning_depth(),
-            "finality_depth ({}) + SERVICE_BURNABLE_WINDOW_DAA ({}) must not exceed pruning_depth ({}) — the \
+            this.config.params.finality_depth() + this.config.params.service_burnable_window_daa <= this.config.pruning_depth(),
+            "finality_depth ({}) + service_burnable_window_daa ({}) must not exceed pruning_depth ({}) — the \
              service-bond cold refold requires its whole window to stay above the pruning floor",
             this.config.params.finality_depth(),
-            keryx_consensus_core::collateral::SERVICE_BURNABLE_WINDOW_DAA,
+            this.config.params.service_burnable_window_daa,
             this.config.pruning_depth()
         );
 
@@ -721,7 +719,7 @@ impl ConsensusApi for Consensus {
         self.virtual_processor.service_strikes_snapshot(self.lkg_virtual_state.load().daa_score)
     }
 
-    fn get_service_state_rows(&self, pruning_point: Hash) -> ConsensusResult<Vec<Vec<u8>>> {
+    fn get_service_state_rows(&self, pruning_point: Hash, handoff_daa: u64) -> ConsensusResult<Vec<Vec<u8>>> {
         let Some(pp_daa) = self.headers_store.get_daa_score(pruning_point).optional().unwrap() else {
             return Err(ConsensusError::HeaderNotFound(pruning_point));
         };
@@ -729,7 +727,7 @@ impl ConsensusApi for Consensus {
         // cannot re-derive (their cohort windows cross its unretained history). They are outside
         // the pruning point's sealed commitment; the syncee vets them against the per-header
         // commitments that arrive as the chain grows.
-        let cutoff = pp_daa + keryx_consensus_core::collateral::SERVICE_STATE_HANDOFF_DAA;
+        let cutoff = pp_daa.saturating_add(handoff_daa);
         let mut rows: Vec<Vec<u8>> = Vec::new();
         for entry in self.storage.service_burn_store.iterator() {
             let (key, daa) = entry.unwrap();
@@ -841,6 +839,19 @@ impl ConsensusApi for Consensus {
         // Rebuild every derived RAM view (burned set, suspensions, commitment index, cursor).
         self.virtual_processor.load_service_burned();
         Ok(())
+    }
+
+    fn get_service_ledger_snapshot(&self, sample: Hash) -> ConsensusResult<Option<Vec<u8>>> {
+        if sample == self.config.genesis.hash {
+            return Ok(Some(keryx_consensus_core::collateral::ServiceLedgerSnapshot::default().to_bytes()));
+        }
+        Ok(self.storage.service_ledger_snapshot_store.get(sample).unwrap())
+    }
+
+    fn import_service_ledger_snapshot(&self, sample: Hash, bytes: Vec<u8>) -> ConsensusResult<()> {
+        let snapshot = keryx_consensus_core::collateral::ServiceLedgerSnapshot::from_bytes(&bytes)
+            .map_err(|_| ConsensusError::General("malformed service-ledger snapshot"))?;
+        self.virtual_processor.install_service_ledger_snapshot(sample, bytes, snapshot)
     }
 
     fn get_virtual_bits(&self) -> u32 {

@@ -121,8 +121,8 @@ pub trait ConsensusApi: Send + Sync {
     }
 
     /// Every finality-flushed service-bond row (canonical commitment byte form) with event daa
-    /// at or below `pruning_point`'s daa — what a fresh node downloads at IBD.
-    fn get_service_state_rows(&self, pruning_point: Hash) -> ConsensusResult<Vec<Vec<u8>>> {
+    /// at or below `pruning_point`'s daa plus `handoff_daa` — what a fresh node downloads at IBD.
+    fn get_service_state_rows(&self, pruning_point: Hash, handoff_daa: u64) -> ConsensusResult<Vec<Vec<u8>>> {
         unimplemented!()
     }
 
@@ -130,6 +130,17 @@ pub trait ConsensusApi: Send + Sync {
     /// and rebuilds the derived RAM state. Rows MUST have been verified against a validated
     /// header's `service_state_hash` by the caller.
     fn import_service_state(&self, rows: Vec<Vec<u8>>) -> ConsensusResult<()> {
+        unimplemented!()
+    }
+
+    /// The canonical service-ledger snapshot persisted at pruning sample `sample`, if held.
+    fn get_service_ledger_snapshot(&self, sample: Hash) -> ConsensusResult<Option<Vec<u8>>> {
+        unimplemented!()
+    }
+
+    /// Installs a verified ledger snapshot for `sample` (the imported pruning point): persists
+    /// it and restarts the live ledger fold from it. Rows MUST have been imported first.
+    fn import_service_ledger_snapshot(&self, sample: Hash, bytes: Vec<u8>) -> ConsensusResult<()> {
         unimplemented!()
     }
 

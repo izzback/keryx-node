@@ -8,6 +8,7 @@ use keryx_p2p_lib::{
 };
 use rand::Rng;
 use std::{
+    collections::VecDeque,
     sync::{Arc, Weak},
     time::{Duration, Instant},
 };
@@ -46,7 +47,19 @@ impl ReceivePingsFlow {
     }
 }
 
-pub const PING_INTERVAL: Duration = Duration::from_secs(120); // 2 minutes
+pub const PING_INTERVAL: Duration = Duration::from_secs(30);
+
+/// How long we wait for a pong before counting a strike.
+const PONG_TIMEOUT: Duration = Duration::from_secs(60);
+
+/// Consecutive missed pongs tolerated before the peer is dropped.
+///
+/// A single miss is not evidence of a dead peer. `Pong` shares the peer's single, unprioritized
+/// outgoing queue with block bodies, so an IBD chunk of `IBD_BATCH_SIZE` bodies — each carrying a
+/// PoM proof of a few hundred KiB — can legitimately sit in front of it, and the receiving side can
+/// be stalled just as long validating them. Dropping the connection on the first miss turned a slow
+/// minute into a lost peer, and (through `record_ping_timeout`) into a 24h ban of an honest node.
+const MAX_CONSECUTIVE_PING_TIMEOUTS: u32 = 3;
 
 /// Flow for managing a loop sending pings and waiting for pongs
 pub struct SendPingsFlow {
@@ -76,6 +89,12 @@ impl SendPingsFlow {
     }
 
     async fn start_impl(&mut self) -> Result<(), ProtocolError> {
+        let mut consecutive_timeouts = 0u32;
+        // Nonces still unanswered, with the instant they were sent. Because we now tolerate missed
+        // pongs, a pong for an earlier round can legitimately arrive during a later one — it is
+        // proof of liveness, not a protocol violation, so we match against the whole window instead
+        // of only the latest nonce.
+        let mut outstanding: VecDeque<(u64, Instant)> = VecDeque::with_capacity(MAX_CONSECUTIVE_PING_TIMEOUTS as usize);
         loop {
             // Wait `PING_INTERVAL` between pings
             if let TickReason::Shutdown = self.ctx.tick_service.tick(PING_INTERVAL).await {
@@ -85,27 +104,71 @@ impl SendPingsFlow {
             // Create a fresh random nonce for each ping
             let nonce = rand::thread_rng().r#gen::<u64>();
             let ping = make_message!(Payload::Ping, PingMessage { nonce });
-            let ping_time = Instant::now();
             let Some(router) = self.router.upgrade() else {
                 return Err(ProtocolError::ConnectionClosed);
             };
             router.enqueue(ping).await?;
-            let pong = match dequeue_with_timeout!(self.incoming_route, Payload::Pong) {
+            if outstanding.len() == MAX_CONSECUTIVE_PING_TIMEOUTS as usize {
+                outstanding.pop_front();
+            }
+            outstanding.push_back((nonce, Instant::now()));
+
+            let pong = match dequeue_with_timeout!(self.incoming_route, Payload::Pong, PONG_TIMEOUT) {
                 Err(e @ ProtocolError::Timeout(_)) => {
-                    if let Some(cm) = self.ctx.connection_manager() {
+                    consecutive_timeouts += 1;
+                    // Only a peer that has never answered a single pong on this connection is
+                    // counted towards an automatic ban. That is precisely the phantom-node
+                    // signature the ban was written for — connect silently, occupy a slot, never
+                    // speak — and it structurally excludes an honest peer that is merely stalled.
+                    if router.last_ping_duration() == 0
+                        && let Some(cm) = self.ctx.connection_manager()
+                    {
                         cm.record_ping_timeout(router.net_address().ip()).await;
                     }
-                    return Err(e);
+                    if consecutive_timeouts >= MAX_CONSECUTIVE_PING_TIMEOUTS {
+                        return Err(e);
+                    }
+                    debug!(
+                        "Ping timeout {}/{} with peer {} (nonce: {}), still giving it a chance",
+                        consecutive_timeouts, MAX_CONSECUTIVE_PING_TIMEOUTS, self.peer, nonce
+                    );
+                    continue;
                 }
                 Err(e) => return Err(e),
                 Ok(p) => p,
             };
-            if pong.nonce != nonce {
+            let Some(sent_at) = settle_pong(&mut outstanding, pong.nonce) else {
                 return Err(ProtocolError::Other("nonce mismatch between ping and pong"));
-            } else {
-                debug!("Successful ping with peer {} (nonce: {})", self.peer, pong.nonce);
-            }
-            router.set_last_ping_duration(ping_time.elapsed().as_millis() as u64);
+            };
+            debug!("Successful ping with peer {} (nonce: {})", self.peer, pong.nonce);
+            consecutive_timeouts = 0;
+            router.set_last_ping_duration(sent_at.elapsed().as_millis() as u64);
         }
+    }
+}
+
+/// Matches a pong against the outstanding window: drops the matched ping and every older one,
+/// keeps the newer pings in flight, and returns the matched ping's send instant.
+fn settle_pong(outstanding: &mut VecDeque<(u64, Instant)>, nonce: u64) -> Option<Instant> {
+    let idx = outstanding.iter().position(|(sent_nonce, _)| *sent_nonce == nonce)?;
+    let (_, sent_at) = outstanding[idx];
+    outstanding.drain(..=idx);
+    Some(sent_at)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_late_pong_keeps_newer_pings_outstanding() {
+        let now = Instant::now();
+        let mut outstanding: VecDeque<(u64, Instant)> = [(1u64, now), (2u64, now), (3u64, now)].into_iter().collect();
+
+        assert_eq!(settle_pong(&mut outstanding, 1), Some(now));
+        assert_eq!(outstanding.iter().map(|(n, _)| *n).collect::<Vec<_>>(), vec![2, 3]);
+        assert_eq!(settle_pong(&mut outstanding, 3), Some(now));
+        assert!(outstanding.is_empty());
+        assert_eq!(settle_pong(&mut outstanding, 2), None);
     }
 }

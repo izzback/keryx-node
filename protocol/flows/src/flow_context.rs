@@ -24,7 +24,7 @@ use keryx_core::{
     kaspad_env::{name, version},
     task::tick::TickService,
 };
-use keryx_core::{error, time::unix_now, warn};
+use keryx_core::{time::unix_now, warn};
 use keryx_hashes::Hash;
 use keryx_mining::mempool::tx::{Orphan, Priority};
 use keryx_mining::{manager::MiningManagerProxy, mempool::tx::RbfPolicy};
@@ -69,7 +69,7 @@ use uuid::Uuid;
 /// (`BlockMessage.pom_proof_deduped`) and the requester-declared proof horizon
 /// (`RequestIBDBlocksMessage.pom_proof_min_daa`). Both are negotiated per peer, so a v11 node
 /// still serves the full-path encoding to everything older.
-const PROTOCOL_VERSION: u32 = 11;
+const PROTOCOL_VERSION: u32 = 12;
 
 /// See `check_orphan_resolution_range`
 const BASELINE_ORPHAN_RESOLUTION_RANGE: u32 = 5;
@@ -338,8 +338,8 @@ impl FlowContext {
             let depth = virtual_daa.saturating_sub(block.header.daa_score);
             if depth <= POM_PROOF_SERVE_DEPTH_DAA {
                 self.enqueue_pom_reproof(block.hash());
-                error!(
-                    "PoM guard-rail: about to serve RECENT block {} (daa {}, depth {}) WITHOUT its possession proof. Proof-enforcing peers will reject it — this is how a propagation hole becomes a network wedge. The proof should be re-synced from a proof-carrying node.",
+                debug!(
+                    "Serving recent block {} (daa {}, depth {}) without its possession proof; re-proof requested",
                     block.hash(),
                     block.header.daa_score,
                     depth
@@ -927,8 +927,7 @@ impl ConnectionInitializer for FlowContext {
         // Register all flows according to version
         let (flows, applied_protocol_version) = match peer_version.protocol_version {
             v if v >= PROTOCOL_VERSION => (v8::register(self.clone(), router.clone(), PROTOCOL_VERSION), PROTOCOL_VERSION),
-            // Explicit arm for the previous version: with PROTOCOL_VERSION at 11 the catch-all
-            // above no longer covers v10, and without this every v10 peer gets VersionMismatch.
+            11 => (v8::register(self.clone(), router.clone(), 11), 11),
             10 => (v8::register(self.clone(), router.clone(), 10), 10),
             9 => (v8::register(self.clone(), router.clone(), 9), 9),
             8 => (v8::register(self.clone(), router.clone(), 8), 8),
@@ -944,8 +943,15 @@ impl ConnectionInitializer for FlowContext {
             disable_relay_tx: peer_version.disable_relay_tx,
             subnetwork_id: peer_version.subnetwork_id.to_owned(),
             time_offset,
+            advertised_address: peer_version.address,
         });
         router.set_properties(peer_properties);
+
+        // Remember the version we actually negotiated — not the one advertised — so outbound dialing
+        // can prefer peers that serve the compact proof encoding, keeping older ones as a fallback.
+        if let Some(connection_manager) = self.connection_manager() {
+            connection_manager.record_peer_protocol_version(router.net_address().ip(), applied_protocol_version);
+        }
 
         // Send and receive the ready signal
         handshake.exchange_ready_messages().await?;
