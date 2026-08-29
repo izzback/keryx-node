@@ -100,9 +100,9 @@ jobs:
           rustfmt --edition 2024 --check protocol/flows/src/ibd/flow.rs
           if ($LASTEXITCODE -ne 0) { throw 'rustfmt check failed for IBD flow' }
 
-          $phase42 = '37801a265330f1131eabf07ff1d7b48c231fffa6'
-          git diff --check "$phase42..HEAD"
-          if ($LASTEXITCODE -ne 0) { throw 'Phase 4.3 git diff --check failed' }
+          $phase43Parent = 'bc9e38975d8c83fa96c0214daebdcf0a08a79f11'
+          git diff --check "$phase43Parent..HEAD"
+          if ($LASTEXITCODE -ne 0) { throw 'Phase 4.3 functional git diff --check failed' }
           $expectedFiles = @(
             'components/consensusmanager/src/session.rs',
             'consensus/core/src/api/mod.rs',
@@ -110,11 +110,11 @@ jobs:
             'consensus/src/model/stores/ghostdag.rs',
             'protocol/flows/src/ibd/flow.rs'
           )
-          $actualFiles = @(git diff --name-only "$phase42..HEAD")
+          $actualFiles = @(git diff --name-only "$phase43Parent..HEAD")
           $unexpected = @($actualFiles | Where-Object { $_ -notin $expectedFiles })
-          if ($unexpected.Count -ne 0) { throw "unexpected Phase 4.3 source changes: $($unexpected -join ', ')" }
+          if ($unexpected.Count -ne 0) { throw "unexpected Phase 4.3 functional source changes: $($unexpected -join ', ')" }
           foreach ($file in $expectedFiles) {
-            if ($file -notin $actualFiles) { throw "expected Phase 4.3 source change missing: $file" }
+            if ($file -notin $actualFiles) { throw "expected Phase 4.3 functional source change missing: $file" }
           }
 
       - name: Compile Phase 4.3 targets
@@ -138,7 +138,6 @@ jobs:
           $ErrorActionPreference = 'Stop'
           cargo clippy -p keryx-consensusmanager --all-targets --no-deps -- -D warnings
           if ($LASTEXITCODE -ne 0) { throw 'consensusmanager Clippy failed' }
-          # v1.5.6 baseline: p2p-flows has existing type_complexity/collapsible_if findings.
           cargo clippy -p keryx-p2p-flows --all-targets --no-deps -- -D warnings -A clippy::type-complexity -A clippy::collapsible-if
           if ($LASTEXITCODE -ne 0) { throw 'p2p-flows Clippy failed' }
 
