@@ -321,6 +321,10 @@ impl ConsensusSessionOwned {
         self.clone().spawn_blocking(move |c| c.get_header(hash)).await
     }
 
+    pub async fn async_get_headers(&self, hashes: Vec<Hash>) -> ConsensusResult<Vec<Arc<Header>>> {
+        self.clone().spawn_blocking(move |c| c.get_headers(hashes)).await
+    }
+
     pub async fn async_get_headers_selected_tip(&self) -> Hash {
         self.clone().spawn_blocking(|c| c.get_headers_selected_tip()).await
     }

@@ -304,6 +304,12 @@ pub trait ConsensusApi: Send + Sync {
         unimplemented!()
     }
 
+    /// Returns headers in exactly the same order as `hashes`. The first missing header aborts the
+    /// batch with the same `HeaderNotFound` error as `get_header`.
+    fn get_headers(&self, hashes: Vec<Hash>) -> ConsensusResult<Vec<Arc<Header>>> {
+        unimplemented!()
+    }
+
     fn get_headers_selected_tip(&self) -> Hash {
         unimplemented!()
     }

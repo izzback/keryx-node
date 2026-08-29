@@ -1334,6 +1334,13 @@ impl ConsensusApi for Consensus {
         self.headers_store.get_header(hash).optional().unwrap().ok_or(ConsensusError::HeaderNotFound(hash))
     }
 
+    fn get_headers(&self, hashes: Vec<Hash>) -> ConsensusResult<Vec<Arc<Header>>> {
+        hashes
+            .into_iter()
+            .map(|hash| self.headers_store.get_header(hash).optional().unwrap().ok_or(ConsensusError::HeaderNotFound(hash)))
+            .collect()
+    }
+
     fn get_headers_selected_tip(&self) -> Hash {
         self.headers_selected_tip_store.read().get().unwrap().hash
     }

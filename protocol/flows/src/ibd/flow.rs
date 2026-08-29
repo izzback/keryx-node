@@ -1459,14 +1459,21 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                 ))
                 .await?;
             let mut jobs = Vec::with_capacity(chunk.len());
+            let headers = consensus.async_get_headers(chunk.to_vec()).await.map_err(|err| {
+                ProtocolError::OtherOwned(format!("syncee inconsistency: missing trusted block header in batch, err: {}", err))
+            })?;
+            if headers.len() != chunk.len() {
+                return Err(ProtocolError::Other("consensus returned a truncated trusted-header batch"));
+            }
 
-            for &hash in chunk.iter() {
+            for (&hash, blk_header) in chunk.iter().zip(headers.into_iter()) {
+                if blk_header.hash != hash {
+                    return Err(ProtocolError::OtherOwned(format!(
+                        "consensus returned header {} while trusted body {} was requested",
+                        blk_header.hash, hash
+                    )));
+                }
                 let msg = dequeue_with_timeout!(self.incoming_route, Payload::BlockBody)?;
-                // Header first: compact v11 proofs derive their seed/tree shape from it.
-                // TODO (relaxed): make header queries in a batch.
-                let blk_header = consensus.async_get_header(hash).await.map_err(|err| {
-                    ProtocolError::OtherOwned(format!("syncee inconsistency: missing block header for {}, err: {}", hash, err))
-                })?;
                 let pom_tier = msg.pom_tier.map(|tier| tier as u8);
                 let pom_proof = decode_pom_proof(&blk_header, msg.pom_proof.clone(), msg.pom_proof_deduped.clone())
                     .map_err(|_| ProtocolError::OtherOwned(format!("invalid pom_proof for trusted block {}", hash)))?
@@ -1750,7 +1757,20 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                 self.incoming_route.id()
             ))
             .await?;
-        for &expected_hash in chunk {
+        let headers = consensus.async_get_headers(chunk.to_vec()).await.map_err(|err| {
+            ProtocolError::OtherOwned(format!("syncee inconsistency: missing block header in body batch, err: {}", err))
+        })?;
+        if headers.len() != chunk.len() {
+            return Err(ProtocolError::Other("consensus returned a truncated body-sync header batch"));
+        }
+
+        for (&expected_hash, blk_header) in chunk.iter().zip(headers.into_iter()) {
+            if blk_header.hash != expected_hash {
+                return Err(ProtocolError::OtherOwned(format!(
+                    "consensus returned header {} while body {} was requested",
+                    blk_header.hash, expected_hash
+                )));
+            }
             let wait_started = metrics_enabled().then(Instant::now);
             let msg = dequeue_with_timeout!(self.incoming_route, Payload::BlockBody)?;
             if let Some(wait_started) = wait_started {
@@ -1771,11 +1791,6 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             // and rejected with "PoM possession proof missing").
             let pom_tier = msg.pom_tier.map(|t| t as u8);
             let decode_started = metrics_enabled().then(Instant::now);
-            // Header first: compact v11 proofs derive their seed/tree shape from it.
-            // TODO (relaxed): make header queries in a batch.
-            let blk_header = consensus.async_get_header(expected_hash).await.map_err(|err| {
-                ProtocolError::OtherOwned(format!("syncee inconsistency: missing block header for {}, err: {}", expected_hash, err))
-            })?;
             let pom_proof = decode_pom_proof(&blk_header, msg.pom_proof.clone(), msg.pom_proof_deduped.clone())
                 .map_err(|_| ProtocolError::OtherOwned(format!("invalid pom_proof for block {}", expected_hash)))?
                 .map(Arc::new);
