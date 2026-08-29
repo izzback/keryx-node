@@ -974,7 +974,7 @@ impl IbdFlow {
             info!("replaying locally verified service-state spool for pruning point {}", pruning_point);
         }
 
-        let handoff_cutoff = pp_daa + keryx_consensus_core::collateral::SERVICE_STATE_HANDOFF_DAA;
+        let handoff_cutoff = pp_daa.saturating_add(crate::v7::request_service_state::service_state_handoff_daa(self.protocol_version));
         let mut rows: Vec<Vec<u8>> = Vec::new();
         let mut metrics = StageMetrics::new();
         let mut resume_tracker = if verified_replay {

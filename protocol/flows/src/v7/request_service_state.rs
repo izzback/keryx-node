@@ -17,6 +17,7 @@ pub struct RequestServiceStateFlow {
     ctx: FlowContext,
     router: Arc<Router>,
     incoming_route: IncomingRoute,
+    protocol_version: u32,
 }
 
 #[async_trait::async_trait]
@@ -31,8 +32,8 @@ impl Flow for RequestServiceStateFlow {
 }
 
 impl RequestServiceStateFlow {
-    pub fn new(ctx: FlowContext, router: Arc<Router>, incoming_route: IncomingRoute) -> Self {
-        Self { ctx, router, incoming_route }
+    pub fn new(ctx: FlowContext, router: Arc<Router>, incoming_route: IncomingRoute, protocol_version: u32) -> Self {
+        Self { ctx, router, incoming_route, protocol_version }
     }
 
     async fn start_impl(&mut self) -> Result<(), ProtocolError> {
@@ -52,7 +53,8 @@ impl RequestServiceStateFlow {
     ) -> Result<(), ProtocolError> {
         let consensus = self.ctx.consensus();
         let session = consensus.session().await;
-        let rows = session.async_get_service_state_rows(pruning_point).await?;
+        let handoff_daa = service_state_handoff_daa(self.protocol_version);
+        let rows = session.async_get_service_state_rows(pruning_point, handoff_daa).await?;
         drop(session);
 
         let start = usize::try_from(start_cursor).map_err(|_| ProtocolError::Other("service-state cursor does not fit usize"))?;
@@ -106,5 +108,27 @@ impl RequestServiceStateFlow {
             ))
             .await?;
         Ok(())
+    }
+}
+/// Event-daa span above the pruning point a peer of `protocol_version` ships and accepts as
+/// service-state handoff rows. Protocol v11+ transfers every flushed row; older peers retain the
+/// bounded legacy handoff window.
+pub fn service_state_handoff_daa(protocol_version: u32) -> u64 {
+    if protocol_version >= 11 { u64::MAX } else { keryx_consensus_core::collateral::SERVICE_STATE_HANDOFF_DAA }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::service_state_handoff_daa;
+
+    #[test]
+    fn v11_and_newer_take_the_full_flushed_service_state() {
+        assert_eq!(service_state_handoff_daa(11), u64::MAX);
+        assert_eq!(service_state_handoff_daa(12), u64::MAX);
+    }
+
+    #[test]
+    fn pre_v11_keeps_the_legacy_handoff_window() {
+        assert_eq!(service_state_handoff_daa(10), keryx_consensus_core::collateral::SERVICE_STATE_HANDOFF_DAA);
     }
 }
