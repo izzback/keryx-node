@@ -19,6 +19,7 @@ jobs:
     defaults:
       run:
         shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File {0}
+
     steps:
       - name: Checkout repository metadata
         uses: actions/checkout@v4
@@ -27,37 +28,45 @@ jobs:
           clean: true
 
       - name: Verify and publish immutable Phase 4.4 tag
+        env:
+          GH_TOKEN: ${{ github.token }}
         run: |
           $ErrorActionPreference = 'Stop'
           $tag = 'ibd-v2-phase4.4-frozen-v1.5.6'
           $expected = 'ef3a4de6b8780087cede4fa29d81af2a9295151f'
-
-          git fetch --force --tags origin
-          if ($LASTEXITCODE -ne 0) { throw 'git fetch --tags failed' }
+          $api = "https://api.github.com/repos/izzback/keryx-node/git/ref/tags/$tag"
+          $headers = @{
+            Authorization = "Bearer $env:GH_TOKEN"
+            Accept = 'application/vnd.github+json'
+            'X-GitHub-Api-Version' = '2022-11-28'
+          }
 
           git cat-file -e "$expected^{commit}"
           if ($LASTEXITCODE -ne 0) { throw "Phase 4.4 functional commit $expected is unavailable" }
 
-          $existingLines = @(git tag --list $tag)
-          if ($LASTEXITCODE -ne 0) { throw 'git tag --list failed' }
-          $existing = if ($existingLines.Count -gt 0) { [string]$existingLines[0] } else { '' }
-          if ($existing) {
-            $actual = ([string](git rev-list -n 1 $tag)).Trim()
+          $existing = $null
+          try {
+            $existing = Invoke-RestMethod -Method Get -Uri $api -Headers $headers -UseBasicParsing
+          } catch {
+            $status = $null
+            if ($_.Exception.Response) { $status = [int]$_.Exception.Response.StatusCode }
+            if ($status -ne 404) { throw }
+          }
+
+          if ($null -ne $existing) {
+            $actual = [string]$existing.object.sha
             if ($actual -ne $expected) {
-              throw "existing tag $tag points to $actual instead of $expected"
+              throw "existing remote tag $tag points to $actual instead of $expected"
             }
             Write-Host "TAG_ALREADY_CORRECT=$tag@$actual"
             exit 0
           }
 
-          git config user.name 'izzback'
-          git config user.email 'poolarismining1@gmail.com'
-          git tag -a $tag $expected -m 'Keryx IBD V2 Phase 4.4 frozen on v1.5.6 clean exact-commit certification'
-          if ($LASTEXITCODE -ne 0) { throw 'git tag failed' }
-          git push origin "refs/tags/$tag"
-          if ($LASTEXITCODE -ne 0) { throw 'git push tag failed' }
+          $body = @{ ref = "refs/tags/$tag"; sha = $expected } | ConvertTo-Json -Compress
+          Invoke-RestMethod -Method Post -Uri 'https://api.github.com/repos/izzback/keryx-node/git/refs' -Headers $headers -Body $body -ContentType 'application/json' -UseBasicParsing | Out-Null
 
-          $actual = ([string](git rev-list -n 1 $tag)).Trim()
+          $published = Invoke-RestMethod -Method Get -Uri $api -Headers $headers -UseBasicParsing
+          $actual = [string]$published.object.sha
           if ($actual -ne $expected) { throw "published tag resolves to $actual instead of $expected" }
           Write-Host "PHASE4_4_FREEZE_TAG=$tag"
           Write-Host "PHASE4_4_FUNCTIONAL_COMMIT=$actual"
