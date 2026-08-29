@@ -392,6 +392,11 @@ pub trait ConsensusApi: Send + Sync {
         unimplemented!()
     }
 
+    /// Returns statuses in exactly the same order as `hashes`, preserving `None` for missing hashes.
+    fn get_block_statuses(&self, hashes: &[Hash]) -> Vec<Option<BlockStatus>> {
+        unimplemented!()
+    }
+
     fn get_block_acceptance_data(&self, hash: Hash) -> ConsensusResult<Arc<AcceptanceData>> {
         unimplemented!()
     }

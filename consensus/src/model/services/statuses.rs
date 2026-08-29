@@ -22,6 +22,10 @@ impl<T: StatusesStoreReader> StatusesStoreReader for MTStatusesService<T> {
         self.store.read().get(hash)
     }
 
+    fn get_many(&self, hashes: &[Hash]) -> Result<Vec<Option<BlockStatus>>, StoreError> {
+        self.store.read().get_many(hashes)
+    }
+
     fn has(&self, hash: Hash) -> Result<bool, StoreError> {
         self.store.read().has(hash)
     }

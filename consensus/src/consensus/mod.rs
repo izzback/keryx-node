@@ -1484,8 +1484,8 @@ impl ConsensusApi for Consensus {
     }
 
     fn get_ghostdag_data_batch(&self, hashes: Vec<Hash>) -> ConsensusResult<Vec<ExternalGhostdagData>> {
-        for &hash in &hashes {
-            match self.get_block_status(hash) {
+        for (&hash, status) in hashes.iter().zip(self.get_block_statuses(&hashes)) {
+            match status {
                 None => return Err(ConsensusError::HeaderNotFound(hash)),
                 Some(BlockStatus::StatusInvalid) => return Err(ConsensusError::InvalidBlock(hash)),
                 _ => {}
@@ -1518,6 +1518,10 @@ impl ConsensusApi for Consensus {
 
     fn get_block_status(&self, hash: Hash) -> Option<BlockStatus> {
         self.statuses_store.read().get(hash).optional().unwrap()
+    }
+
+    fn get_block_statuses(&self, hashes: &[Hash]) -> Vec<Option<BlockStatus>> {
+        self.statuses_store.read().get_many(hashes).unwrap()
     }
 
     fn get_block_acceptance_data(&self, hash: Hash) -> ConsensusResult<Arc<AcceptanceData>> {

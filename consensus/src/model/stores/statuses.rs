@@ -12,6 +12,7 @@ use keryx_hashes::Hash;
 /// Reader API for `StatusesStore`.
 pub trait StatusesStoreReader {
     fn get(&self, hash: Hash) -> StoreResult<BlockStatus>;
+    fn get_many(&self, hashes: &[Hash]) -> StoreResult<Vec<Option<BlockStatus>>>;
     fn has(&self, hash: Hash) -> StoreResult<bool>;
 }
 
@@ -73,6 +74,10 @@ impl StatusesStoreBatchExtensions for Arc<RwLock<DbStatusesStore>> {
 impl StatusesStoreReader for DbStatusesStore {
     fn get(&self, hash: Hash) -> StoreResult<BlockStatus> {
         self.access.read(hash)
+    }
+
+    fn get_many(&self, hashes: &[Hash]) -> StoreResult<Vec<Option<BlockStatus>>> {
+        self.access.read_many(hashes).map(|(statuses, _, _)| statuses)
     }
 
     fn has(&self, hash: Hash) -> StoreResult<bool> {
