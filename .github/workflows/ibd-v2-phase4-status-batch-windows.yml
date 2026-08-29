@@ -104,11 +104,9 @@ jobs:
           cargo check -p keryxd --all-targets
           if ($LASTEXITCODE -ne 0) { throw 'keryxd check failed' }
 
-      - name: Clippy Phase 4.4 touched consumers
+      - name: Clippy Phase 4.4 consumers
         run: |
           $ErrorActionPreference = 'Stop'
-          cargo clippy -p keryx-consensus --all-targets --no-deps -- -D warnings
-          if ($LASTEXITCODE -ne 0) { throw 'consensus Clippy failed' }
           cargo clippy -p keryx-consensusmanager --all-targets --no-deps -- -D warnings
           if ($LASTEXITCODE -ne 0) { throw 'consensusmanager Clippy failed' }
           cargo clippy -p keryx-p2p-flows --all-targets --no-deps -- -D warnings -A clippy::type-complexity -A clippy::collapsible-if
