@@ -1,0 +1,61 @@
+name: Keryx IBD v2 Phase 4.4 Freeze Tag Windows
+
+on:
+  push:
+    branches:
+      - ibd-v2-phase4-db-batching
+    paths:
+      - '.github/workflows/ibd-v2-phase4-tag-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  tag-freeze:
+    name: Tag frozen Phase 4.4 functional commit
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 15
+    defaults:
+      run:
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File {0}
+    steps:
+      - name: Checkout repository metadata
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          clean: true
+
+      - name: Verify and publish immutable Phase 4.4 tag
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $tag = 'ibd-v2-phase4.4-frozen-v1.5.6'
+          $expected = 'ef3a4de6b8780087cede4fa29d81af2a9295151f'
+
+          git fetch --force --tags origin
+          if ($LASTEXITCODE -ne 0) { throw 'git fetch --tags failed' }
+
+          git cat-file -e "$expected^{commit}"
+          if ($LASTEXITCODE -ne 0) { throw "Phase 4.4 functional commit $expected is unavailable" }
+
+          $existing = (git tag --list $tag).Trim()
+          if ($existing) {
+            $actual = (git rev-list -n 1 $tag).Trim()
+            if ($actual -ne $expected) {
+              throw "existing tag $tag points to $actual instead of $expected"
+            }
+            Write-Host "TAG_ALREADY_CORRECT=$tag@$actual"
+            exit 0
+          }
+
+          git config user.name 'izzback'
+          git config user.email 'poolarismining1@gmail.com'
+          git tag -a $tag $expected -m 'Keryx IBD V2 Phase 4.4 frozen on v1.5.6 clean exact-commit certification'
+          if ($LASTEXITCODE -ne 0) { throw 'git tag failed' }
+          git push origin "refs/tags/$tag"
+          if ($LASTEXITCODE -ne 0) { throw 'git push tag failed' }
+
+          $actual = (git rev-list -n 1 $tag).Trim()
+          if ($actual -ne $expected) { throw "published tag resolves to $actual instead of $expected" }
+          Write-Host "PHASE4_4_FREEZE_TAG=$tag"
+          Write-Host "PHASE4_4_FUNCTIONAL_COMMIT=$actual"
