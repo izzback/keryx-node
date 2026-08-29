@@ -1,0 +1,159 @@
+name: Keryx IBD v2 Recent PoM Re-proof Recovery Clean Windows
+
+on:
+  push:
+    branches:
+      - ibd-v2-phase5-pom-compatible
+    paths:
+      - '.github/workflows/ibd-v2-phase5-reproof-recovery-clean-windows.yml'
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ibd-v2-phase5-reproof-recovery-clean-windows-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  clean-certify:
+    name: Clean certify recent PoM re-proof recovery
+    runs-on: [self-hosted, Windows, X64]
+    timeout-minutes: 120
+    defaults:
+      run:
+        shell: powershell -NoLogo -NoProfile -ExecutionPolicy Bypass -File {0}
+
+    steps:
+      - name: Checkout exact recent PoM recovery commit
+        uses: actions/checkout@v4
+        with:
+          ref: 3ee37026f89caace3890e1ac20ee299b71032cbf
+          fetch-depth: 0
+          clean: true
+
+      - name: Verify exact clean source tree
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $expected = '3ee37026f89caace3890e1ac20ee299b71032cbf'
+          $actual = (git rev-parse HEAD).Trim()
+          if ($actual -ne $expected) { throw "wrong recent PoM recovery source commit: $actual" }
+          $dirty = @(git status --porcelain)
+          if ($dirty.Count -ne 0) { throw "source tree is dirty before clean certification: $($dirty -join '; ')" }
+          Write-Host "PHASE5_REPROOF_RECOVERY_COMMIT=$actual"
+
+      - name: Install protoc 29.6
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $protocVersion = '29.6'
+          $archive = Join-Path $env:RUNNER_TEMP "protoc-$protocVersion-phase5-reproof-clean.zip"
+          $installDir = Join-Path $env:RUNNER_TEMP "protoc-$protocVersion-phase5-reproof-clean"
+          $url = "https://github.com/protocolbuffers/protobuf/releases/download/v$protocVersion/protoc-$protocVersion-win64.zip"
+          if (Test-Path $installDir) { Remove-Item $installDir -Recurse -Force }
+          New-Item -ItemType Directory -Path $installDir -Force | Out-Null
+          Invoke-WebRequest -Uri $url -OutFile $archive -UseBasicParsing
+          Expand-Archive -LiteralPath $archive -DestinationPath $installDir -Force
+          $protocBin = Join-Path $installDir 'bin'
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [IO.File]::AppendAllText($env:GITHUB_PATH, "$protocBin`r`n", $utf8NoBom)
+          & (Join-Path $protocBin 'protoc.exe') --version
+          if ($LASTEXITCODE -ne 0) { throw 'protoc version check failed' }
+
+      - name: Install Rust 1.93.0 natively
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $rustRoot = Join-Path $env:RUNNER_TEMP 'rust-1.93.0-phase5-reproof-clean'
+          $cargoHome = Join-Path $rustRoot 'cargo'
+          $rustupHome = Join-Path $rustRoot 'rustup'
+          $rustupInit = Join-Path $env:RUNNER_TEMP 'rustup-init-phase5-reproof-clean.exe'
+          if (Test-Path $rustRoot) { Remove-Item $rustRoot -Recurse -Force }
+          New-Item -ItemType Directory -Path $rustRoot -Force | Out-Null
+          Invoke-WebRequest -Uri 'https://static.rust-lang.org/rustup/dist/x86_64-pc-windows-msvc/rustup-init.exe' -OutFile $rustupInit -UseBasicParsing
+          $env:CARGO_HOME = $cargoHome
+          $env:RUSTUP_HOME = $rustupHome
+          & $rustupInit -y --no-modify-path --profile minimal --default-host x86_64-pc-windows-msvc --default-toolchain 1.93.0
+          if ($LASTEXITCODE -ne 0) { throw 'rustup-init failed' }
+          $cargoBin = Join-Path $cargoHome 'bin'
+          & (Join-Path $cargoBin 'rustup.exe') component add rustfmt clippy --toolchain 1.93.0-x86_64-pc-windows-msvc
+          if ($LASTEXITCODE -ne 0) { throw 'rustup component install failed' }
+          $utf8NoBom = New-Object System.Text.UTF8Encoding($false)
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "CARGO_HOME=$cargoHome`r`nRUSTUP_HOME=$rustupHome`r`n", $utf8NoBom)
+          [IO.File]::AppendAllText($env:GITHUB_PATH, "$cargoBin`r`n", $utf8NoBom)
+          & (Join-Path $cargoBin 'rustc.exe') --version --verbose
+          & (Join-Path $cargoBin 'cargo.exe') --version
+
+      - name: Verify formatting and source-only diff
+        run: |
+          $ErrorActionPreference = 'Stop'
+          rustfmt --edition 2024 --check protocol/flows/src/ibd_v2/mod.rs protocol/flows/src/ibd_v2/pom_reproof_recovery.rs
+          if ($LASTEXITCODE -ne 0) { throw 'recent PoM recovery rustfmt failed' }
+          $parent = '3e1b63c2c92309d582dcc42f15592fa7aa9402cf'
+          git diff --check "$parent..HEAD"
+          if ($LASTEXITCODE -ne 0) { throw 'recent PoM recovery diff check failed' }
+          $actualFiles = @(git diff --name-only "$parent..HEAD")
+          $expectedFiles = @('protocol/flows/src/ibd_v2/mod.rs','protocol/flows/src/ibd_v2/pom_reproof_recovery.rs')
+          if (@($actualFiles).Count -ne 2 -or (Compare-Object $actualFiles $expectedFiles)) {
+            throw "unexpected recent PoM recovery files: $($actualFiles -join ', ')"
+          }
+
+      - name: Compile recent PoM recovery targets
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo check -p keryx-p2p-flows --all-targets
+          if ($LASTEXITCODE -ne 0) { throw 'p2p-flows check failed' }
+          cargo check -p keryxd --all-targets
+          if ($LASTEXITCODE -ne 0) { throw 'keryxd check failed' }
+
+      - name: Clippy recent PoM recovery touched crate
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo clippy -p keryx-p2p-flows --all-targets --no-deps -- -D warnings -A clippy::type-complexity -A clippy::collapsible-if
+          if ($LASTEXITCODE -ne 0) { throw 'p2p-flows Clippy failed' }
+
+      - name: Run recent PoM recovery regressions
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo test -p keryx-p2p-flows ibd_v2::pom_reproof_recovery
+          if ($LASTEXITCODE -ne 0) { throw 'recent PoM recovery tests failed' }
+          cargo test -p keryx-p2p-flows ibd_v2
+          if ($LASTEXITCODE -ne 0) { throw 'IBD v2 regression tests failed' }
+
+      - name: Build release node
+        run: |
+          $ErrorActionPreference = 'Stop'
+          cargo build --release -p keryxd
+          if ($LASTEXITCODE -ne 0) { throw 'release build failed' }
+          $dirty = @(git status --porcelain)
+          if ($dirty.Count -ne 0) { throw "source tree changed during clean certification: $($dirty -join '; ')" }
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'target\release\keryxd.exe').Hash.ToLowerInvariant()
+          Write-Host "keryxd.exe SHA256=$hash"
+
+      - name: Package canonical recent PoM recovery node
+        run: |
+          $ErrorActionPreference = 'Stop'
+          $out = Join-Path $PWD 'ibd-v2-phase5-reproof-recovery-clean-artifact'
+          if (Test-Path $out) { Remove-Item $out -Recurse -Force }
+          New-Item -ItemType Directory -Path $out -Force | Out-Null
+          Copy-Item 'target\release\keryxd.exe' (Join-Path $out 'keryxd.exe')
+          $hash = (Get-FileHash -Algorithm SHA256 -LiteralPath 'target\release\keryxd.exe').Hash.ToLowerInvariant()
+          @(
+            'project=Keryx IBD V2 Phase 5 Recent PoM re-proof recovery microstep',
+            'upstream_version=1.5.6',
+            'phase4_4_freeze_tag=ibd-v2-phase4.4-frozen-v1.5.6',
+            'phase4_4_functional_commit=ef3a4de6b8780087cede4fa29d81af2a9295151f',
+            'phase5_1_classifier_commit=d9ba1a27666d9b72f968a04a5ffa796bbf0d1586',
+            'phase5_1_wiring_commit=70cdf0309f9b44522f9056ca278d5b534877fc75',
+            'phase5_reproof_recovery_commit=3ee37026f89caace3890e1ac20ee299b71032cbf',
+            'change=persist bounded recent PoM re-proof retry backlog; no FlowContext/relay wiring yet; no historical proof recovery',
+            'certification=clean-exact-commit',
+            'runner=Keryx-Node-Windows-01',
+            "keryxd_sha256=$hash"
+          ) | Set-Content -Encoding ASCII -LiteralPath (Join-Path $out 'BUILD-MANIFEST.txt')
+
+      - name: Upload canonical recent PoM recovery node
+        uses: actions/upload-artifact@v4
+        with:
+          name: keryx-ibd-v2-phase5-reproof-recovery-clean-3ee37026f89caace3890e1ac20ee299b71032cbf
+          path: ibd-v2-phase5-reproof-recovery-clean-artifact
+          if-no-files-found: error
+          retention-days: 14
