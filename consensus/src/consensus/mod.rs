@@ -332,27 +332,26 @@ impl Consensus {
         this.run_database_upgrades();
 
         // Invariant the prefix-sum production index depends on for determinism: the ratio-reward
-        // window never reaches below the pruning point, so every in-window block AND the `cum(b−W)`
+        // window never reaches below the pruning point, so every in-window block AND the `cum(bâˆ’W)`
         // floor baseline are always on disk for every node (archival or pruned). If a future param
-        // change ever violated this, the index would silently undercount past the floor → divergent
+        // change ever violated this, the index would silently undercount past the floor â†’ divergent
         // coinbase. Fail loudly at startup instead. (864k < 1.08M on mainnet today.)
         assert!(
             this.config.params.ratio_reward_window < this.config.pruning_depth(),
-            "ratio_reward_window ({}) must be strictly less than pruning_depth ({}) — the windowed-production \
+            "ratio_reward_window ({}) must be strictly less than pruning_depth ({}) â€” the windowed-production \
              prefix index requires the whole window to stay above the pruning floor",
             this.config.params.ratio_reward_window,
             this.config.pruning_depth()
         );
         // Same invariant class for the service-bond cold refold: its deepest reach (the finality
         // anchor plus the burnable-window warmup) must stay above the pruning floor, or a fresh
-        // node would silently rebuild a truncated vault → divergent burns.
+        // node would silently rebuild a truncated vault â†’ divergent burns.
         assert!(
-            this.config.params.finality_depth() + keryx_consensus_core::collateral::SERVICE_BURNABLE_WINDOW_DAA
-                <= this.config.pruning_depth(),
-            "finality_depth ({}) + SERVICE_BURNABLE_WINDOW_DAA ({}) must not exceed pruning_depth ({}) — the \
+            this.config.params.finality_depth() + this.config.params.service_burnable_window_daa <= this.config.pruning_depth(),
+            "finality_depth ({}) + service_burnable_window_daa ({}) must not exceed pruning_depth ({}) â€” the \
              service-bond cold refold requires its whole window to stay above the pruning floor",
             this.config.params.finality_depth(),
-            keryx_consensus_core::collateral::SERVICE_BURNABLE_WINDOW_DAA,
+            this.config.params.service_burnable_window_daa,
             this.config.pruning_depth()
         );
 
@@ -363,12 +362,12 @@ impl Consensus {
 
         // Ratio-reward balance index (the ratio numerator): recompute from the current UTXO set so a
         // snapshot-restored datadir's stale balance index can't make the numerator differ across nodes.
-        // Authoritative (Σ UTXO); incremental maintenance carries it forward from here. See its doc.
+        // Authoritative (Î£ UTXO); incremental maintenance carries it forward from here. See its doc.
         this.virtual_processor.rebuild_address_balance_index();
 
         // Coin-age (v3) bucket index: recompute from the UTXO set (each entry carries its
         // `effective_daa` anchor). Also re-classifies coins that matured in place since the last
-        // run — the startup-time counterpart of the maturation-queue promotions.
+        // run â€” the startup-time counterpart of the maturation-queue promotions.
         this.virtual_processor.rebuild_age_buckets_index();
 
         this
@@ -851,6 +850,19 @@ impl ConsensusApi for Consensus {
         Ok(())
     }
 
+    fn get_service_ledger_snapshot(&self, sample: Hash) -> ConsensusResult<Option<Vec<u8>>> {
+        if sample == self.config.genesis.hash {
+            return Ok(Some(keryx_consensus_core::collateral::ServiceLedgerSnapshot::default().to_bytes()));
+        }
+        Ok(self.storage.service_ledger_snapshot_store.get(sample).unwrap())
+    }
+
+    fn import_service_ledger_snapshot(&self, sample: Hash, bytes: Vec<u8>) -> ConsensusResult<()> {
+        let snapshot = keryx_consensus_core::collateral::ServiceLedgerSnapshot::from_bytes(&bytes)
+            .map_err(|_| ConsensusError::General("malformed service-ledger snapshot"))?;
+        self.virtual_processor.install_service_ledger_snapshot(sample, bytes, snapshot)
+    }
+
     fn get_virtual_bits(&self) -> u32 {
         self.lkg_virtual_state.load().bits
     }
@@ -1278,7 +1290,7 @@ impl ConsensusApi for Consensus {
         let mut pruning_meta_write = self.pruning_meta_stores.write();
         pruning_meta_write.utxo_set.write_many(utxoset_chunk).unwrap();
 
-        // Coin-age muhash gate is PER COIN (each entry's own creation era) — see `MuHashExtensions`.
+        // Coin-age muhash gate is PER COIN (each entry's own creation era) â€” see `MuHashExtensions`.
         let coin_age_activation = self.config.params.coin_age_activation;
         // Parallelize processing using the context of an existing thread pool.
         let inner_multiset = self.virtual_processor.install(|| {
@@ -1406,7 +1418,7 @@ impl ConsensusApi for Consensus {
             header: self.headers_store.get_header(hash).optional().unwrap().ok_or(ConsensusError::BlockNotFound(hash))?,
             transactions: self.block_transactions_store.get(hash).optional().unwrap().ok_or(ConsensusError::BlockNotFound(hash))?,
             // Reattach the persisted PoM proof so the block can be re-served (relay/IBD) and pass
-            // peers' `check_pom_proof`. Pre-fork blocks have no entry ⇒ None.
+            // peers' `check_pom_proof`. Pre-fork blocks have no entry â‡’ None.
             pom_proof: self.pom_proof_store.get(hash).optional().unwrap().map(Arc::new),
             // Reattach the proven tier so a syncing peer can validate the coinbase tier-reward split
             // even for legacy blocks that have a tier but no persisted proof.

@@ -910,6 +910,22 @@ impl BlockrateParams {
         }
         self
     }
+
+    /// Test networks only: shrinks the depths so pruning points and finality come within hours.
+    pub const fn with_depths(mut self, finality_depth: u64, pruning_depth: u64, merge_depth: u64) -> Self {
+        self.finality_depth = finality_depth;
+        self.pruning_depth = pruning_depth;
+        self.merge_depth = merge_depth;
+        self
+    }
+
+    /// Test networks only: denser window sampling, so the difficulty and median-time windows span
+    /// fewer blocks than the finality depth.
+    pub const fn with_sample_rates(mut self, past_median_time_sample_rate: u64, difficulty_sample_rate: u64) -> Self {
+        self.past_median_time_sample_rate = past_median_time_sample_rate;
+        self.difficulty_sample_rate = difficulty_sample_rate;
+        self
+    }
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -1244,6 +1260,12 @@ pub struct Params {
     /// accepted responder once the win is finality-deep. Changes coinbase validation and the
     /// sealed service state — must be armed above every live tip before the binary ships.
     pub reward_routing_activation: ForkActivation,
+    /// Header `service_state_hash` also commits the service-ledger snapshot at the pruning point
+    /// (see `collateral::service_commitment_v2`); a fresh sync imports and verifies that snapshot.
+    pub service_ledger_activation: ForkActivation,
+    /// DAA window during which an escrow claim stays burnable (`collateral::SERVICE_BURNABLE_WINDOW_DAA`
+    /// on mainnet; shrunk on test networks together with the depths).
+    pub service_burnable_window_daa: u64,
 
     /// Chain-anchor checkpoint `(hash, daa_score)` — local peering policy, see `CHAIN_ANCHOR_HASH`.
     /// `None` disables enforcement (all nets but mainnet).
@@ -1503,6 +1525,8 @@ impl Params {
             pom_v3_activation: self.pom_v3_activation,
             service_bond_v2_activation: self.service_bond_v2_activation,
             reward_routing_activation: self.reward_routing_activation,
+            service_ledger_activation: self.service_ledger_activation,
+            service_burnable_window_daa: self.service_burnable_window_daa,
 
             chain_anchor: self.chain_anchor,
             service_state_checkpoint: self.service_state_checkpoint,
@@ -1709,6 +1733,8 @@ pub const MAINNET_PARAMS: Params = Params {
     // 09:01 UTC at the chain's own rate over the preceding hours (~10.12 daa/s).
     service_bond_v2_activation: ForkActivation::new(77_525_000),
     reward_routing_activation: ForkActivation::new(79_210_000),
+    service_ledger_activation: ForkActivation::never(),
+    service_burnable_window_daa: crate::collateral::SERVICE_BURNABLE_WINDOW_DAA,
     chain_anchor: Some((CHAIN_ANCHOR_HASH, CHAIN_ANCHOR_DAA)),
     service_state_checkpoint: Some((SERVICE_STATE_CHECKPOINT_DAA, SERVICE_STATE_CHECKPOINT)),
     ratio_reward_window: RATIO_REWARD_WINDOW,
@@ -1760,7 +1786,7 @@ pub const TESTNET_PARAMS: Params = Params {
     max_block_level: 250,
     pruning_proof_m: 1000,
 
-    blockrate: BlockrateParams::new::<10>(),
+    blockrate: BlockrateParams::new::<10>().with_depths(6_000, 33_000, 6_000).with_sample_rates(10, 4),
 
     pre_crescendo_target_time_per_block: TenBps::target_time_per_block(),
 
@@ -1779,7 +1805,7 @@ pub const TESTNET_PARAMS: Params = Params {
     inference_reward_minimums_v2: INFERENCE_REWARD_MINIMUMS_V2,
 
     // PoM possession: active from genesis (mainnet-state baseline).
-    pom_activation: ForkActivation::new(0),
+    pom_activation: ForkActivation::new(1),
     very_light_activation: ForkActivation::new(0), // H2 5-tier lineup from genesis
     // H3 block levels: active from the first mined block (mainnet-state baseline; the H3
     // transition was rehearsed on the previous testnet). `new(1)` and NOT `new(0)`/`always()`:
@@ -1828,11 +1854,13 @@ pub const TESTNET_PARAMS: Params = Params {
     // model lineup, so below this gate it has no model to walk and cannot mine at all. Genesis
     // itself is committed without body validation, so the mandatory escrow delegation never
     // applies to it. MUST mirror the miner's gate.
-    pom_v3_activation: ForkActivation::new(0),
+    pom_v3_activation: ForkActivation::new(1),
     // H7 service-bond v2 — arm ABOVE the live testnet tip before deploying: the fold is sealed,
     // flipping it below already-folded history splits the testnet.
     service_bond_v2_activation: ForkActivation::new(0),
     reward_routing_activation: ForkActivation::new(500),
+    service_ledger_activation: ForkActivation::new(500),
+    service_burnable_window_daa: 6_000,
     chain_anchor: None,
     service_state_checkpoint: None,
     // Testnet override: shrink the production window to ~100 s (1_000 blocks @ 10 BPS) instead of
@@ -1921,6 +1949,8 @@ pub const SIMNET_PARAMS: Params = Params {
     pom_v3_activation: ForkActivation::never(),
     service_bond_v2_activation: ForkActivation::never(),
     reward_routing_activation: ForkActivation::never(),
+    service_ledger_activation: ForkActivation::never(),
+    service_burnable_window_daa: crate::collateral::SERVICE_BURNABLE_WINDOW_DAA,
     chain_anchor: None,
     service_state_checkpoint: None,
     ratio_reward_window: RATIO_REWARD_WINDOW,
@@ -2003,6 +2033,8 @@ pub const DEVNET_PARAMS: Params = Params {
     pom_v3_activation: ForkActivation::never(),
     service_bond_v2_activation: ForkActivation::never(),
     reward_routing_activation: ForkActivation::never(),
+    service_ledger_activation: ForkActivation::never(),
+    service_burnable_window_daa: crate::collateral::SERVICE_BURNABLE_WINDOW_DAA,
     chain_anchor: None,
     service_state_checkpoint: None,
     ratio_reward_window: RATIO_REWARD_WINDOW,

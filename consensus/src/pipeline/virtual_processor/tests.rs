@@ -332,7 +332,7 @@ fn new_miner_data() -> MinerData {
     MinerData::new(ScriptPublicKey::new(0, script), keryx_inference::gen_opoi_extra_data(0))
 }
 
-// ── OPoI E2E helpers ──────────────────────────────────────────────────────────
+// â”€â”€ OPoI E2E helpers â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 fn opoi_config() -> keryx_consensus_core::config::Config {
     ConfigBuilder::new(MAINNET_PARAMS).skip_proof_of_work().build()
@@ -357,7 +357,7 @@ fn response_hash_of(tx: &Transaction) -> Hash {
     Hash::from_bytes(bytes)
 }
 
-// ── OPoI E2E tests ────────────────────────────────────────────────────────────
+// â”€â”€ OPoI E2E tests â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// After a block containing an AiResponse TX is accepted, the consensus must
 /// have registered the response in the ai_response_store so challengers can
@@ -383,15 +383,15 @@ async fn opoi_response_registered_on_chain() {
     tc.shutdown(handles);
 }
 
-// OPoI slashing removed (v1.2.3): the slash-behavior tests (fraud→slash, honest→no-slash,
-// unknown→no-slash, outside-window→no-slash) were dropped together with the slashing mechanism.
+// OPoI slashing removed (v1.2.3): the slash-behavior tests (fraudâ†’slash, honestâ†’no-slash,
+// unknownâ†’no-slash, outside-windowâ†’no-slash) were dropped together with the slashing mechanism.
 // Escrows are now always spendable; there is no slash state to assert.
 
-// ── tier-reward E2E (full pipeline: commit → store → coinbase split) ──────────
+// â”€â”€ tier-reward E2E (full pipeline: commit â†’ store â†’ coinbase split) â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// End-to-end: a merged block's miner cut in its merging block's coinbase is scaled by the
-/// merged block's cryptographically-proven PoM tier — persisted at body commit (`pom_tier_store`),
-/// read back by the virtual processor when it builds the coinbase. The floor tier (0, −18 %) pays
+/// merged block's cryptographically-proven PoM tier â€” persisted at body commit (`pom_tier_store`),
+/// read back by the virtual processor when it builds the coinbase. The floor tier (0, âˆ’18 %) pays
 /// its miner exactly 82 % of what the top tier (3, 0 %) pays, while the total block reward is
 /// identical (the shortfall is burned). `skip_proof_of_work` skips `check_pom_proof`, so the test
 /// can attach a chosen-tier proof without a real possession witness; only `tier` is read.
@@ -424,7 +424,7 @@ async fn tier_reward_e2e_scales_merged_block_miner_cut() {
         let mut ctx = TestContext::new(TestConsensus::new(&config));
         let miner_spk = ctx.miner_data.script_public_key.clone();
 
-        // Block A over genesis, carrying a possession proof of `tier` → tier stored at commit.
+        // Block A over genesis, carrying a possession proof of `tier` â†’ tier stored at commit.
         ctx.simulated_time += ctx.consensus.params().target_time_per_block();
         let a = ctx.build_block_template(0, ctx.simulated_time).block.to_immutable().with_pom_proof(proof_with_tier(tier));
         ctx.validate_and_insert_block(a).await;
@@ -439,7 +439,7 @@ async fn tier_reward_e2e_scales_merged_block_miner_cut() {
     }
 
     let (total_top, miner_top) = payout_for_tier(3).await; // 0 %
-    let (total_floor, miner_floor) = payout_for_tier(0).await; // −18 %
+    let (total_floor, miner_floor) = payout_for_tier(0).await; // âˆ’18 %
 
     assert!(miner_top > 0, "top-tier block must pay its miner");
     assert_eq!(total_top, total_floor, "tier penalty must not change the total block reward");
@@ -508,8 +508,56 @@ async fn ibd_body_without_proof_is_paid_by_its_header_tier() {
     }
 }
 
+/// A header committing to a pruning point older than every ledger snapshot the node holds is
+/// not checked; one committing to a newer sample the node lacks is an error; a held sample is
+/// checked.
+#[tokio::test]
+async fn service_state_check_skips_pruning_points_below_the_snapshot_floor() {
+    use crate::model::stores::headers::HeaderStoreReader;
+    use keryx_consensus_core::config::params::ForkActivation;
+    use keryx_consensus_core::errors::block::RuleError;
+
+    let config = ConfigBuilder::new(MAINNET_PARAMS)
+        .skip_proof_of_work()
+        .edit_consensus_params(|p| {
+            p.pom_level_activation = ForkActivation::always();
+            p.service_ledger_activation = ForkActivation::always();
+        })
+        .build();
+    let tc = TestConsensus::new(&config);
+    let handles = tc.init();
+    let mut parent = config.genesis.hash;
+    for n in 1..=30u64 {
+        let hash: Hash = n.into();
+        tc.add_utxo_valid_block_with_parents(hash, vec![parent], vec![]).await.unwrap();
+        parent = hash;
+    }
+    let vp = tc.virtual_processor().clone();
+    let held: Hash = 20u64.into();
+    {
+        let mut hashes = vp.service_ledger_hashes.write();
+        hashes.clear();
+        hashes.insert(held, Hash::from_u64_word(7));
+    }
+    assert_eq!(vp.service_ledger_floor_daa(), vp.headers_store.get_daa_score(held).unwrap());
+
+    let header_committing_to = |pp: u64| {
+        let mut header = (*vp.headers_store.get_header(30u64.into()).unwrap()).clone();
+        header.pruning_point = pp.into();
+        header
+    };
+    assert!(vp.expected_service_state_hash(&header_committing_to(10)).unwrap().is_none());
+    assert!(vp.expected_service_state_hash(&header_committing_to(20)).unwrap().is_some());
+    assert!(matches!(
+        vp.expected_service_state_hash(&header_committing_to(25)),
+        Err(RuleError::MissingServiceLedgerSnapshot(pp)) if pp == Hash::from(25u64)
+    ));
+    drop(vp);
+    tc.shutdown(handles);
+}
+
 /// A transaction spending a burned escrow outpoint is rejected in the UTXO context, before any
-/// entry lookup — the spend-level enforcement of a finality-deep service miss.
+/// entry lookup â€” the spend-level enforcement of a finality-deep service miss.
 #[tokio::test]
 async fn burned_escrow_outpoint_spend_is_rejected() {
     use crate::processes::transaction_validator::{errors::TxRuleError, tx_validation_in_utxo_context::TxValidationFlags};
@@ -574,14 +622,14 @@ async fn service_cohort_from_recent_tier_producers() {
     let mut params = MAINNET_PARAMS;
     params.pom_activation = ForkActivation::always();
     // Active v3 gate: the service ledger folds every committed chain block through the real
-    // `resolve_virtual` path (empty request stream — the lifecycle itself is unit-tested).
+    // `resolve_virtual` path (empty request stream â€” the lifecycle itself is unit-tested).
     params.pom_v3_activation = ForkActivation::always();
     let config = ConfigBuilder::new(params).skip_proof_of_work().build();
     let tc = TestConsensus::new(&config);
     let handles = tc.init();
     let genesis = config.genesis.hash;
 
-    // m1 announces an escrow pubkey — his service identity (eligibility key, vault key); m2 does
+    // m1 announces an escrow pubkey â€” his service identity (eligibility key, vault key); m2 does
     // not: his 20 % burns at emission, and without a bond he is not service-eligible at all.
     let mut m1 = new_miner_data();
     let mut extra = m1.extra_data.to_vec();
@@ -593,7 +641,7 @@ async fn service_cohort_from_recent_tier_producers() {
 
     // Single-parent chain b1..b5; each block's tier is proven at its own body commit and paid
     // (hence walked) once merged by the next chain block. b5 is the seed, so the walk sees b1..b4:
-    // tier 0 ← {m1 (b1, b4), m2 (b3, ignored — no escrow)}, tier 1 ← {m2 (b2, ignored)}. b3 also
+    // tier 0 â† {m1 (b1, b4), m2 (b3, ignored â€” no escrow)}, tier 1 â† {m2 (b2, ignored)}. b3 also
     // carries an AiResponse to an unknown request, folded into the ledger as a no-op.
     let stray_response = make_ai_response_tx([0x42u8; 32], [0u8; 32]);
     let plan = [(1u64, &m1, 0u8), (2, &m2, 1), (3, &m2, 0), (4, &m1, 0), (5, &m1, 1)];
@@ -655,7 +703,7 @@ async fn windowed_production_prefix_accumulates_per_producer_and_slides() {
     let mut ctx = TestContext::new(TestConsensus::new(&config));
 
     // 7-block single chain (chain indices 1..=7). The same producer mines blocks 6 and 7 (0-indexed
-    // i=5,6 ⇒ chain indices 6,7), both inside the last-3 window ⇒ its windowed production must be two
+    // i=5,6 â‡’ chain indices 6,7), both inside the last-3 window â‡’ its windowed production must be two
     // base cuts (cumulative chaining within one SPK).
     let repeat = new_miner_data();
     let mut producers: Vec<ScriptPublicKey> = Vec::new();
@@ -683,10 +731,10 @@ async fn windowed_production_prefix_accumulates_per_producer_and_slides() {
         via_block
     };
 
-    // Window = last 3 selected-chain blocks (chain indices 5,6,7 ⇒ producers i=4,5,6). Producers i=0..3
-    // aged out ⇒ dropped to zero; i=4 contributes one cut; the repeat (i=5,6) chains to two cuts.
+    // Window = last 3 selected-chain blocks (chain indices 5,6,7 â‡’ producers i=4,5,6). Producers i=0..3
+    // aged out â‡’ dropped to zero; i=4 contributes one cut; the repeat (i=5,6) chains to two cuts.
     for i in 0..4 {
-        assert_eq!(windowed(&producers[i]), 0, "producer {i} aged out of the window ⇒ entry dropped");
+        assert_eq!(windowed(&producers[i]), 0, "producer {i} aged out of the window â‡’ entry dropped");
     }
     assert_eq!(windowed(&producers[4]), one_cut, "a single in-window block contributes exactly one base cut");
     assert_eq!(
@@ -698,14 +746,14 @@ async fn windowed_production_prefix_accumulates_per_producer_and_slides() {
 
 /// H3 era of the production index: per-blue accounting + daa-sized window. On a single chain each
 /// chain block's sole mergeset blue is its selected parent, so index `i` credits the producer of
-/// block `i−1` — payment-mirror semantics: a producer is credited when its block is MERGED, so the
+/// block `iâˆ’1` â€” payment-mirror semantics: a producer is credited when its block is MERGED, so the
 /// sink's own producer is not yet in the window. The window bottom is found by daa (fixed
 /// real-time duration) instead of a chain-block count.
 ///
 /// `pom_level_activation` is `new(1)` (not `always()`): the same activation drives the global
 /// header-hashing switch (`init_pom_level_activation`), and genesis (daa 0) must keep its pinned
 /// legacy hash. Every non-genesis block of this consensus hashes with the (zero) `pom_final_state`
-/// committed — internally consistent, and `skip_proof_of_work` bypasses the PoM checks.
+/// committed â€” internally consistent, and `skip_proof_of_work` bypasses the PoM checks.
 #[tokio::test]
 async fn windowed_production_prefix_h3_per_blue_daa_window() {
     use crate::model::stores::headers::HeaderStoreReader;
@@ -734,23 +782,23 @@ async fn windowed_production_prefix_h3_per_blue_daa_window() {
     let vp = ctx.consensus.virtual_processor().clone();
     let sink = ctx.consensus.get_sink();
     let sink_daa = ctx.consensus.headers_store().get_daa_score(sink).unwrap();
-    // Single chain: daa_score = chain index − 1 (genesis daa 0, block 1 daa 0, block i daa i−1).
-    assert_eq!(sink_daa, 6, "single chain ⇒ daa_score = chain index − 1");
+    // Single chain: daa_score = chain index âˆ’ 1 (genesis daa 0, block 1 daa 0, block i daa iâˆ’1).
+    assert_eq!(sink_daa, 6, "single chain â‡’ daa_score = chain index âˆ’ 1");
     let one_cut = vp.coinbase_manager.base_miner_cut(sink_daa);
 
     let windowed = |spk: &ScriptPublicKey| vp.windowed_production_for_block(spk, sink, legacy_w);
 
-    // daa window = (6−3, 6] in daa units ⇒ chain indices 5,6,7 (daa 4,5,6), crediting the MERGED
+    // daa window = (6âˆ’3, 6] in daa units â‡’ chain indices 5,6,7 (daa 4,5,6), crediting the MERGED
     // blues = the producers of blocks 4,5,6 (0-indexed producers[3], producers[4], producers[5]).
     for i in 0..3 {
-        assert_eq!(windowed(&producers[i]), 0, "producer {i} merged below the daa window ⇒ zero");
+        assert_eq!(windowed(&producers[i]), 0, "producer {i} merged below the daa window â‡’ zero");
     }
     assert_eq!(windowed(&producers[3]), one_cut, "block 4's producer is credited at merge index 5");
     assert_eq!(windowed(&producers[4]), one_cut, "block 5's producer is credited at merge index 6");
     // The repeat producer mined blocks 6 and 7, but only block 6 has been MERGED (at index 7);
-    // block 7 is the sink itself — its production is credited when a child merges it, exactly like
+    // block 7 is the sink itself â€” its production is credited when a child merges it, exactly like
     // its coinbase payment. Payment-mirror semantics: one cut, not two.
-    assert_eq!(windowed(&repeat.script_public_key), one_cut, "the sink's own production is not yet merged ⇒ one cut");
+    assert_eq!(windowed(&repeat.script_public_key), one_cut, "the sink's own production is not yet merged â‡’ one cut");
 }
 
 /// Fastsync production-window trust (Option A): `trust_coinbase()` must relax ratio-reward coinbase
@@ -762,7 +810,7 @@ async fn windowed_production_prefix_h3_per_blue_daa_window() {
 /// The import is simulated at genesis (mirrors the `set_initial_utxo_set` / integration-test pattern
 /// for `import_pruning_point_utxo_set`: an empty multiset trivially matches genesis's own UTXO
 /// commitment). `import_pruning_point_utxo_set` recomputes virtual with the imported pruning point as
-/// its sole parent, so this must happen *before* any blocks are built on top of genesis — doing it
+/// its sole parent, so this must happen *before* any blocks are built on top of genesis â€” doing it
 /// after would silently discard that chain progress from virtual's perspective. Real fast sync never
 /// hits that ordering hazard because the imported pruning point is always itself the current chain
 /// tip; constructing a *non-genesis* pruning point with a correctly matching multiset needs the full
@@ -785,18 +833,18 @@ async fn fastsync_catchup_window_trusts_then_expires() {
     let mut ctx = TestContext::new(TestConsensus::new(&config));
     let vp = ctx.consensus.virtual_processor().clone();
 
-    // Never imported a snapshot ⇒ no catch-up gap to begin with, regardless of chain progress.
+    // Never imported a snapshot â‡’ no catch-up gap to begin with, regardless of chain progress.
     assert_eq!(vp.production_index_seed_store.read().get_optional(), None, "fresh node must have no seed recorded");
     assert!(!vp.trust_coinbase(), "a from-genesis node must never get the fastsync relaxation");
 
     // Simulate a pruning-point UTXO import (fast sync) at genesis, before any blocks are built (see
     // doc comment above for why ordering matters here). The seeded index it records is the *current*
-    // selected-chain tip at the moment of the call — genesis, i.e. index 0.
+    // selected-chain tip at the moment of the call â€” genesis, i.e. index 0.
     let genesis_hash = ctx.consensus.params().genesis.hash;
     ctx.consensus.import_pruning_point_utxo_set(genesis_hash, MuHash::new()).unwrap();
 
     let seeded_at = vp.production_index_seed_store.read().get_optional().expect("import must record a seed");
-    assert_eq!(seeded_at, 0, "import happened at genesis ⇒ seeded index must be 0");
+    assert_eq!(seeded_at, 0, "import happened at genesis â‡’ seeded index must be 0");
     assert!(vp.trust_coinbase(), "must be trusted immediately after import (0 blocks into the catch-up window)");
 
     // Still inside the window: ratio_reward_window - 1 more blocks keeps us under the threshold.
@@ -807,7 +855,7 @@ async fn fastsync_catchup_window_trusts_then_expires() {
         assert!(vp.trust_coinbase(), "must stay trusted while still inside the post-import catch-up window");
     }
 
-    // One more block crosses the window boundary ⇒ the relaxation must self-expire.
+    // One more block crosses the window boundary â‡’ the relaxation must self-expire.
     ctx.build_block_template_row(0..1).validate_and_insert_row().await;
     let tip_idx = vp.selected_chain_store.read().get_tip().unwrap().0;
     assert!(tip_idx - seeded_at >= window, "test setup sanity: must have crossed the window");
@@ -818,7 +866,7 @@ async fn fastsync_catchup_window_trusts_then_expires() {
 /// genesis (lockstep with the virtual UTXO set in `commit_virtual_state`) must equal, key-for-key,
 /// the index a fast-synced node rebuilds at `import_pruning_point_utxo_set` by grouping the imported
 /// UTXO snapshot per payout SPK. If the two diverge, a fast-synced node would compute a different
-/// holder bracket than a from-genesis node for the same block → divergent expected coinbase → a
+/// holder bracket than a from-genesis node for the same block â†’ divergent expected coinbase â†’ a
 /// consensus split. This pins the property that makes flipping `ratio_reward_activation` safe.
 #[tokio::test]
 async fn ratio_reward_balance_index_reconstruction_matches_incremental() {
@@ -831,7 +879,7 @@ async fn ratio_reward_balance_index_reconstruction_matches_incremental() {
     let mut ctx = TestContext::new(TestConsensus::new(&config));
 
     // A handful of width-1 blocks, each built by a distinct random producer SPK, so several payout
-    // addresses accrue coinbase (plus the escrow and R&D outputs of every block → multiple SPK kinds).
+    // addresses accrue coinbase (plus the escrow and R&D outputs of every block â†’ multiple SPK kinds).
     for _ in 0..8 {
         ctx.miner_data = new_miner_data();
         ctx.build_block_template_row(0..1).validate_and_insert_row().await;
@@ -839,7 +887,7 @@ async fn ratio_reward_balance_index_reconstruction_matches_incremental() {
 
     let vp = ctx.consensus.virtual_processor().clone();
 
-    // Reconstruction seed: exact mirror of `import_pruning_point_utxo_set` — group the current
+    // Reconstruction seed: exact mirror of `import_pruning_point_utxo_set` â€” group the current
     // virtual UTXO snapshot per SPK with `saturating_add`.
     let mut reconstructed: HashMap<ScriptPublicKey, u64> = HashMap::new();
     {
@@ -870,7 +918,7 @@ async fn ratio_reward_balance_index_reconstruction_matches_incremental() {
 }
 
 /// Adversarial harness for the coin-age write path: drives `sweep_maturation_queue` +
-/// `apply_age_diff` directly — in the exact order and batching of `commit_virtual_state` —
+/// `apply_age_diff` directly â€” in the exact order and batching of `commit_virtual_state` â€”
 /// through score advances, tip re-anchors (score drops) and interleaved spends/re-adds, and
 /// after EVERY commit asserts the self-check invariant: the stored buckets must equal the
 /// reclassification of the shadow UTXO set at the committed score. Any sequence that breaks
@@ -931,7 +979,7 @@ async fn coin_age_maturation_choreography_adversarial() {
             // Mirror of commit_virtual_state: sweep FIRST, then the diff, one batch, one write.
             let mut batch = WriteBatch::default();
             let needs_rebuild = vp.sweep_maturation_queue(&mut batch, *score, &diff);
-            assert!(!needs_rebuild, "{name}: commit {i} dropped beyond the retention horizon — keep scenario drops shallow");
+            assert!(!needs_rebuild, "{name}: commit {i} dropped beyond the retention horizon â€” keep scenario drops shallow");
             vp.apply_age_diff(&mut batch, &diff, *score);
             db.write(batch).unwrap();
 
@@ -964,13 +1012,13 @@ async fn coin_age_maturation_choreography_adversarial() {
         }
     }
 
-    // S1 — baseline: deposit, ride to maturity, promote exactly at the due boundary.
+    // S1 â€” baseline: deposit, ride to maturity, promote exactly at the due boundary.
     run(
         "s1_baseline_promotion",
         &[(B, vec![(1, 0xA1, 1_000, B)], vec![]), (DUE1 - 1, vec![], vec![]), (DUE1, vec![], vec![]), (DUE1 + 500, vec![], vec![])],
     );
 
-    // S2 — pure tip oscillation: promote, re-anchor below the due (demote), re-advance (re-promote).
+    // S2 â€” pure tip oscillation: promote, re-anchor below the due (demote), re-advance (re-promote).
     run(
         "s2_demote_repromote",
         &[
@@ -981,13 +1029,13 @@ async fn coin_age_maturation_choreography_adversarial() {
         ],
     );
 
-    // S3 — score drop with the matured coin spent in the SAME commit (demote + immature remove).
+    // S3 â€” score drop with the matured coin spent in the SAME commit (demote + immature remove).
     run(
         "s3_drop_with_inflight_spend",
         &[(B, vec![(1, 0xA1, 1_000, B)], vec![]), (DUE1 + 100, vec![], vec![]), (DUE1 - 50, vec![], vec![1])],
     );
 
-    // S4 — spent after maturing, then a reorg restores the coin below its due (the skip-rule case),
+    // S4 â€” spent after maturing, then a reorg restores the coin below its due (the skip-rule case),
     // then maturity again.
     run(
         "s4_spent_after_maturing_reorg_restore",
@@ -1000,7 +1048,7 @@ async fn coin_age_maturation_choreography_adversarial() {
         ],
     );
 
-    // S5 — re-anchor during a drop: same outpoint removed (old anchor) AND re-added (new anchor)
+    // S5 â€” re-anchor during a drop: same outpoint removed (old anchor) AND re-added (new anchor)
     // in the demotion commit, then maturity at the NEW due.
     run(
         "s5_reanchor_same_outpoint_in_drop",
@@ -1012,11 +1060,11 @@ async fn coin_age_maturation_choreography_adversarial() {
         ],
     );
 
-    // S6 — due and spent in the same commit: the sweep must promote first, the diff then removes
+    // S6 â€” due and spent in the same commit: the sweep must promote first, the diff then removes
     // on the mature side (the ordering contract stated on `sweep_maturation_queue`).
     run("s6_due_and_spend_same_commit", &[(B, vec![(1, 0xA1, 1_000, B)], vec![]), (DUE1, vec![], vec![1])]);
 
-    // S7 — several SPKs with staggered dues, a drop across a subset of them with an in-flight
+    // S7 â€” several SPKs with staggered dues, a drop across a subset of them with an in-flight
     // spend, a fresh deposit while re-advancing.
     run(
         "s7_multi_spk_interleaved_oscillation",
@@ -1039,8 +1087,8 @@ async fn coin_age_maturation_choreography_adversarial() {
         ],
     );
 
-    // S8 — oscillation hammer: a due-dense cluster (20 coins, 10 DAA apart, 2 SPKs), then a dozen
-    // advance/drop cycles walking through the cluster, each drop carrying a spend and a deposit —
+    // S8 â€” oscillation hammer: a due-dense cluster (20 coins, 10 DAA apart, 2 SPKs), then a dozen
+    // advance/drop cycles walking through the cluster, each drop carrying a spend and a deposit â€”
     // the closest static approximation of a busy pool under routine tip re-anchors.
     let mut s8: Vec<CommitSpec> = Vec::new();
     let mut cluster: Vec<(u64, u8, u64, u64)> = Vec::new();
@@ -1062,11 +1110,11 @@ async fn coin_age_maturation_choreography_adversarial() {
     s8.push((B + W + 400, vec![], vec![]));
     run("s8_oscillation_hammer", &s8);
 
-    // S9 — deterministic fuzz walk: thousands of commits mixing score oscillations, fresh and
-    // INHERITED anchors (effective_daa far in the past, including exactly at the `score − W`
-    // boundary — the consolidation-keeps-age path the static scenarios above cannot reach),
+    // S9 â€” deterministic fuzz walk: thousands of commits mixing score oscillations, fresh and
+    // INHERITED anchors (effective_daa far in the past, including exactly at the `score âˆ’ W`
+    // boundary â€” the consolidation-keeps-age path the static scenarios above cannot reach),
     // spends of barely-mature coins during drops, and same-outpoint re-anchors. The sequence is
-    // fully determined by SEED — a failure prints the commit index, so the exact minimal replay
+    // fully determined by SEED â€” a failure prints the commit index, so the exact minimal replay
     // can be reconstructed by truncating the generated script.
     for seed in 1u64..=8 {
         let mut rng = 0x5EED_C014_A6E0_0000 + seed;
@@ -1131,11 +1179,11 @@ async fn coin_age_maturation_choreography_adversarial() {
         run(&format!("s9_fuzz_walk_seed_{seed}"), &s9);
     }
 
-    // S10 — the POOLARIS / izzback hypothesis: a tx re-accepted by a different chain block during
+    // S10 â€” the POOLARIS / izzback hypothesis: a tx re-accepted by a different chain block during
     // a shallow reorg yields the SAME outpoint in diff.add AND diff.remove with the SAME inherited
     // effective_daa (block_daa_score differs, so the pair survives diff algebra). apply_age_diff's
     // add loop inserts the maturation-queue entry, then its remove loop deletes the SAME key in the
-    // same batch — the coin survives in the UTXO set, the buckets stay net-consistent (silent), but
+    // same batch â€” the coin survives in the UTXO set, the buckets stay net-consistent (silent), but
     // the queue entry is gone: when the due passes, the promotion never fires. Expected failure at
     // the LAST commit (b_imm keeps the coin the reclassification calls mature) until the loop order
     // is fixed (removes before adds).
@@ -1144,7 +1192,7 @@ async fn coin_age_maturation_choreography_adversarial() {
         &[
             (B, vec![(1, 0xA1, 1_000, B)], vec![]),
             // Shallow re-anchor: same outpoint spent AND re-added with the SAME effective_daa
-            // (the runner rebuilds the entry from the add tuple — block_daa_score differing in
+            // (the runner rebuilds the entry from the add tuple â€” block_daa_score differing in
             // production is what lets this pair reach apply_age_diff; the queue key only depends
             // on (effective_daa + W, outpoint), which is what collides).
             (B + 50, vec![(1, 0xA1, 1_000, B)], vec![1]),
@@ -1154,13 +1202,13 @@ async fn coin_age_maturation_choreography_adversarial() {
     );
 }
 
-// ── Reward-window floor under a pruned selected-chain index ───────────────────
+// â”€â”€ Reward-window floor under a pruned selected-chain index â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
 
 /// A consensus whose selected-chain index no longer reaches the header pruning points of the
 /// blocks under (re)validation: the DAG is 8 blocks wide (daa outruns the chain index, the shape
 /// of every freshly initialized store), and the index is pruned below chain index 5 with the
-/// pruning point moved there — what a node that pruned ahead of a restart catch-up holds.
-async fn pruned_floor_fixture() -> (TestConsensus, Vec<JoinHandle<()>>) {
+/// pruning point moved there â€” what a node that pruned ahead of a restart catch-up holds.
+async fn pruned_floor_fixture() -> (TestConsensus, std::sync::Arc<keryx_database::prelude::DB>, Vec<JoinHandle<()>>) {
     use crate::model::stores::pruning::PruningStore;
     use crate::model::stores::selected_chain::{SelectedChainStore, SelectedChainStoreReader};
     use keryx_consensus_core::config::params::ForkActivation;
@@ -1170,6 +1218,7 @@ async fn pruned_floor_fixture() -> (TestConsensus, Vec<JoinHandle<()>>) {
         .skip_proof_of_work()
         .edit_consensus_params(|p| {
             p.pom_level_activation = ForkActivation::always();
+            p.service_ledger_activation = ForkActivation::always();
             p.ratio_reward_window_daa = 200;
         })
         .build();
@@ -1210,7 +1259,7 @@ async fn pruned_floor_fixture() -> (TestConsensus, Vec<JoinHandle<()>>) {
         let (tip_idx, _) = sc.get_tip().unwrap();
         assert!(tip_idx < 200, "the chain index must sit inside the daa window for the floor to matter");
     }
-    (tc, handles)
+    (tc, db, handles)
 }
 
 #[tokio::test]
@@ -1219,7 +1268,7 @@ async fn reward_window_floor_survives_a_pruned_header_pruning_point() {
     use crate::model::stores::selected_chain::SelectedChainStoreReader;
     use crate::pipeline::virtual_processor::utxo_validation::ProductionWindowCtx;
 
-    let (tc, _handles) = pruned_floor_fixture().await;
+    let (tc, _db, _handles) = pruned_floor_fixture().await;
     let vp = tc.virtual_processor().clone();
 
     let sc = vp.selected_chain_store.read();
@@ -1252,7 +1301,7 @@ async fn reward_window_floor_survives_a_pruned_header_pruning_point() {
 async fn reward_window_below_the_pruned_horizon_fails_loud() {
     use crate::model::stores::selected_chain::SelectedChainStoreReader;
 
-    let (tc, _handles) = pruned_floor_fixture().await;
+    let (tc, _db, _handles) = pruned_floor_fixture().await;
     let vp = tc.virtual_processor().clone();
 
     // An early chain block: its whole daa window sits below the pruned horizon, so no local
@@ -1263,13 +1312,13 @@ async fn reward_window_below_the_pruned_horizon_fails_loud() {
 
 #[tokio::test]
 async fn cohort_window_survives_a_pruned_header_pruning_point() {
-    let (tc, _handles) = pruned_floor_fixture().await;
+    let (tc, _db, _handles) = pruned_floor_fixture().await;
     let vp = tc.virtual_processor().clone();
     let tip = {
         use crate::model::stores::selected_chain::SelectedChainStoreReader;
         vp.selected_chain_store.read().get_tip().unwrap().1
     };
-    // No tier blocks were mined, so the set is empty — the point is that the window search
+    // No tier blocks were mined, so the set is empty â€” the point is that the window search
     // must not probe below retention on the way there.
     assert!(vp.service_eligible_miners_windowed(tip, 0, 100).is_empty());
 }
@@ -1281,7 +1330,7 @@ async fn cohort_window_survives_a_pruned_header_pruning_point() {
 async fn cohort_window_below_the_pruned_horizon_arms_empty() {
     use crate::model::stores::selected_chain::SelectedChainStoreReader;
 
-    let (tc, _handles) = pruned_floor_fixture().await;
+    let (tc, _db, _handles) = pruned_floor_fixture().await;
     let vp = tc.virtual_processor().clone();
     let early = vp.selected_chain_store.read().get_by_index(6).unwrap();
     assert!(vp.service_eligible_miners_windowed(early, 0, 100).is_empty());
@@ -1355,4 +1404,105 @@ async fn reward_mint_window_is_the_same_off_the_committed_chain() {
     let off_chain = vp.service_reward_mints_for(side_hash);
     assert_eq!(off_chain, vec![(spk, 123_456)]);
     assert_eq!(vp.service_reward_mints_for(on_chain), off_chain);
+}
+
+/// Inside the post-import catch-up window the node trusts the coinbase: a window floor below
+/// retention clamps at the pruning point instead of panicking (the debug dump path), while the
+/// template path anchors its window at the node's own pruning point, which the selected-chain
+/// index always retains â€” so the clamp is never consulted there.
+#[tokio::test]
+async fn trusted_node_clamps_the_window_floor_and_the_template_never_needs_it() {
+    use crate::model::stores::headers::HeaderStoreReader;
+    use crate::model::stores::production_seed::ProductionIndexSeedStore;
+    use crate::model::stores::pruning::PruningStoreReader;
+    use crate::model::stores::selected_chain::SelectedChainStoreReader;
+    use crate::pipeline::virtual_processor::utxo_validation::ProductionWindowCtx;
+    use rocksdb::WriteBatch;
+
+    let (tc, db, _handles) = pruned_floor_fixture().await;
+    let vp = tc.virtual_processor().clone();
+    assert!(!vp.trust_coinbase(), "the fixture must start outside every trust window");
+
+    // Seed the production index at the tip: fewer than a window of chain blocks since import.
+    let (tip_idx, tip) = vp.selected_chain_store.read().get_tip().unwrap();
+    let mut batch = WriteBatch::default();
+    vp.production_index_seed_store.write().set_batch(&mut batch, tip_idx).unwrap();
+    db.write(batch).unwrap();
+    assert!(vp.trust_coinbase());
+
+    // The window below the pruned horizon now clamps at the pruning point instead of panicking.
+    let pp = vp.pruning_point_store.read().pruning_point().unwrap();
+    let pp_idx = vp.selected_chain_store.read().get_by_hash(pp).unwrap();
+    let early = vp.selected_chain_store.read().get_by_index(6).unwrap();
+    match vp.production_window_ctx(early, 0) {
+        ProductionWindowCtx::OnChain { bottom, .. } => assert_eq!(bottom, pp_idx),
+        _ => panic!("a committed chain block must resolve as an on-chain window"),
+    }
+
+    // The template's window is anchored at the node's own pruning point, always retained: the
+    // fallible floor resolves for any daa bound, so the clamp above is never reached there.
+    let sc = vp.selected_chain_store.read();
+    let tip_daa = vp.headers_store.get_daa_score(tip).unwrap();
+    assert_eq!(vp.window_floor_in_retention(&*sc, pp, pp, tip_daa.saturating_sub(vp.ratio_reward_window_daa)), Some(pp_idx));
+    assert_eq!(vp.window_floor_in_retention(&*sc, pp, pp, 0), Some(pp_idx));
+}
+
+/// Every chain block opening a finality epoch gets its service-ledger snapshot persisted, and
+/// nothing else does.
+#[tokio::test]
+async fn ledger_snapshots_are_persisted_at_pruning_samples() {
+    use keryx_consensus_core::collateral::ServiceLedgerSnapshot;
+    use keryx_consensus_core::config::params::ForkActivation;
+
+    let mut params = MAINNET_PARAMS;
+    params.pom_v3_activation = ForkActivation::always();
+    params.blockrate.finality_depth = 10;
+    let config = ConfigBuilder::new(params).skip_proof_of_work().build();
+    let tc = TestConsensus::new(&config);
+    let handles = tc.init();
+
+    let mut parent = config.genesis.hash;
+    for n in 1..=45u64 {
+        let hash: Hash = n.into();
+        tc.add_utxo_valid_block_with_parents(hash, vec![parent], vec![]).await.unwrap();
+        parent = hash;
+    }
+
+    let vp = tc.virtual_processor().clone();
+    let expected: Vec<Hash> = (1..=45u64).map(Hash::from).filter(|h| vp.is_pruning_sample_block(*h)).collect();
+    assert_eq!(expected, vec![Hash::from(10u64), Hash::from(20u64), Hash::from(30u64), Hash::from(40u64)]);
+    for h in expected.iter() {
+        let bytes = vp.service_ledger_snapshot_store.get(*h).unwrap().expect("a sample must carry its snapshot");
+        assert_eq!(ServiceLedgerSnapshot::from_bytes(&bytes).unwrap().to_bytes(), bytes);
+    }
+    let mut stored: Vec<Hash> = vp.service_ledger_snapshot_store.entries().into_iter().map(|(h, _)| h).collect();
+    stored.sort();
+    assert_eq!(stored, expected);
+    assert_eq!(vp.service_ledger_hash_at(config.genesis.hash), Some(ServiceLedgerSnapshot::default().hash()));
+    assert_eq!(vp.service_ledger_hash_at(Hash::from(11u64)), None);
+
+    tc.shutdown(handles);
+}
+
+/// Below the pruning point, a cohort walk past the ledger gate reads the producers carried by the
+/// imported snapshot instead of arming empty.
+#[tokio::test]
+async fn cohort_below_the_pruned_horizon_reads_the_imported_producers() {
+    use crate::model::stores::headers::HeaderStoreReader;
+    use crate::model::stores::pruning::PruningStoreReader;
+    use crate::model::stores::selected_chain::SelectedChainStoreReader;
+
+    let (tc, _db, _handles) = pruned_floor_fixture().await;
+    let vp = tc.virtual_processor().clone();
+    let early = vp.selected_chain_store.read().get_by_index(6).unwrap();
+    let pp = vp.pruning_point_store.read().pruning_point().unwrap();
+    let pp_daa = vp.headers_store.get_daa_score(pp).unwrap();
+    let id = Hash::from_bytes([0xAAu8; 32]);
+    let escrow = Hash::from_bytes([0xBBu8; 32]);
+
+    assert!(vp.service_eligible_miners_windowed(early, 0, 100).is_empty());
+    *vp.service_imported_producers.write() = vec![(pp_daa, id, 0, escrow), (pp_daa, id, 1, escrow)];
+    assert_eq!(vp.service_eligible_miners_windowed(early, 0, 100), vec![(id, escrow)]);
+    assert_eq!(vp.service_eligible_miners_windowed(early, 1, 100), vec![(id, escrow)]);
+    assert!(vp.service_eligible_miners_windowed(early, 2, 100).is_empty());
 }

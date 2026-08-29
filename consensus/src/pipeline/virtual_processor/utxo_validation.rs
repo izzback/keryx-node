@@ -7,7 +7,7 @@ use crate::{
             AiRequestInferenceRewardBelowMinimum, AiRequestInvalidEscrowScript,
             AiRequestMissingEscrowOutput, AiRequestPriorityFeeBelowMinimum,
             AiRequestMaxTokensExceeded, AiResponseModelCapMissing, AiResponseV2BeforeActivation, BadAcceptedIDMerkleRoot,
-            BadCoinbaseTransaction, BadServiceStateCommitment, BadUTXOCommitment, InvalidTransactionsInUtxoContext,
+            BadCoinbaseTransaction, BadServiceStateCommitment, BadUTXOCommitment, InvalidTransactionsInUtxoContext, MissingServiceLedgerSnapshot,
             WrongHeaderPruningPoint,
         },
     },
@@ -313,7 +313,7 @@ impl VirtualStateProcessor {
         // distance from the committed virtual — computing it per block turns a long re-validation
         // walk quadratic, so a trusted transition must not pay for a comparison it discards.
         let enforce = self.ratio_verification_activation.is_active(header.daa_score) && !self.trust_coinbase();
-        if enforce || (std::env::var("KERYX_RATIO_DEBUG").is_ok() && !self.trust_coinbase()) {
+        if enforce || std::env::var("KERYX_RATIO_DEBUG").is_ok() {
             self.verify_coinbase_transaction(
                 &txs[0],
                 header.daa_score,
@@ -331,10 +331,10 @@ impl VirtualStateProcessor {
         // as the coinbase check — a node that cannot yet reproduce the fold trusts the
         // utxo-commitment-pinned chain instead.
         if keryx_consensus_core::pom::service_commit_active(header.daa_score) && !self.trust_coinbase() {
-            let pp_daa = self.headers_store.get_daa_score(header.pruning_point).unwrap();
-            let expected = self.service_commit_index.commitment_at(pp_daa);
-            if header.service_state_hash != expected {
-                return Err(BadServiceStateCommitment(header.hash, header.service_state_hash, expected));
+            if let Some(expected) = self.expected_service_state_hash(header)? {
+                if header.service_state_hash != expected {
+                    return Err(BadServiceStateCommitment(header.hash, header.service_state_hash, expected));
+                }
             }
         }
 
@@ -677,6 +677,22 @@ impl VirtualStateProcessor {
             }
         }
         set
+    }
+
+    /// The service-state commitment `header` must carry. `None` when it commits to a pruning
+    /// point older than every ledger snapshot this node holds: the snapshot cannot be re-derived
+    /// locally, so the check is skipped for that header.
+    pub(super) fn expected_service_state_hash(&self, header: &Header) -> BlockProcessResult<Option<Hash>> {
+        let pp_daa = self.headers_store.get_daa_score(header.pruning_point).unwrap();
+        let rows = self.service_commit_index.commitment_at(pp_daa);
+        if !self.service_ledger_activation.is_active(header.daa_score) {
+            return Ok(Some(rows));
+        }
+        match self.service_ledger_hash_at(header.pruning_point) {
+            Some(ledger) => Ok(Some(keryx_consensus_core::collateral::service_commitment_v2(rows, ledger))),
+            None if pp_daa < self.service_ledger_floor_daa() => Ok(None),
+            None => Err(MissingServiceLedgerSnapshot(header.pruning_point)),
+        }
     }
 
     pub(super) fn tier_bps_by_block(
@@ -1112,6 +1128,9 @@ impl VirtualStateProcessor {
         daa_bound: u64,
     ) -> u64 {
         self.window_floor_in_retention(sc, header_pp, own_pp, daa_bound).unwrap_or_else(|| {
+            if self.trust_coinbase() {
+                return sc.get_by_hash(own_pp).unwrap_or(0);
+            }
             panic!("the validation window reaches below the pruned horizon; local history cannot revalidate it — resync from a fresh datadir")
         })
     }
