@@ -19,6 +19,7 @@ function Replace-Exact {
 }
 
 $statusesPath = 'consensus/src/model/stores/statuses.rs'
+$statusServicePath = 'consensus/src/model/services/statuses.rs'
 $apiPath = 'consensus/core/src/api/mod.rs'
 $consensusPath = 'consensus/src/consensus/mod.rs'
 
@@ -53,6 +54,26 @@ impl StatusesStoreReader for DbStatusesStore {
     }
 
     fn has(&self, hash: Hash) -> StoreResult<bool> {
+'@
+
+Replace-Exact -Path $statusServicePath -Old @'
+impl<T: StatusesStoreReader> StatusesStoreReader for MTStatusesService<T> {
+    fn get(&self, hash: Hash) -> Result<BlockStatus, StoreError> {
+        self.store.read().get(hash)
+    }
+
+    fn has(&self, hash: Hash) -> Result<bool, StoreError> {
+'@ -New @'
+impl<T: StatusesStoreReader> StatusesStoreReader for MTStatusesService<T> {
+    fn get(&self, hash: Hash) -> Result<BlockStatus, StoreError> {
+        self.store.read().get(hash)
+    }
+
+    fn get_many(&self, hashes: &[Hash]) -> Result<Vec<Option<BlockStatus>>, StoreError> {
+        self.store.read().get_many(hashes)
+    }
+
+    fn has(&self, hash: Hash) -> Result<bool, StoreError> {
 '@
 
 Replace-Exact -Path $apiPath -Old @'
@@ -112,6 +133,8 @@ Replace-Exact -Path $consensusPath -Old @'
 
 rustfmt --edition 2024 $statusesPath
 if ($LASTEXITCODE -ne 0) { throw 'rustfmt failed for statuses store' }
+rustfmt --edition 2024 $statusServicePath
+if ($LASTEXITCODE -ne 0) { throw 'rustfmt failed for statuses service' }
 rustfmt --edition 2024 --config skip_children=true $apiPath
 if ($LASTEXITCODE -ne 0) { throw 'rustfmt failed for consensus API' }
 rustfmt --edition 2024 --config skip_children=true $consensusPath
@@ -123,6 +146,7 @@ if ($LASTEXITCODE -ne 0) { throw 'Phase 4.4 git diff --check failed' }
 $expectedFiles = @(
     'consensus/core/src/api/mod.rs',
     'consensus/src/consensus/mod.rs',
+    'consensus/src/model/services/statuses.rs',
     'consensus/src/model/stores/statuses.rs'
 )
 $actualFiles = @(git diff --name-only)
@@ -142,6 +166,11 @@ if (-not $statuses.Contains('fn get_many(&self, hashes: &[Hash]) -> StoreResult<
 }
 if (-not $statuses.Contains('self.access.read_many(hashes)')) {
     throw 'Phase 4.4 status store read_many guard missing'
+}
+
+$statusService = [IO.File]::ReadAllText((Resolve-Path $statusServicePath))
+if (-not $statusService.Contains('self.store.read().get_many(hashes)')) {
+    throw 'Phase 4.4 status service batch forwarding guard missing'
 }
 
 $api = [IO.File]::ReadAllText((Resolve-Path $apiPath))
