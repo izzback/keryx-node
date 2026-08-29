@@ -417,6 +417,10 @@ impl ConsensusSessionOwned {
         self.clone().spawn_blocking(move |c| c.get_ghostdag_data(hash)).await
     }
 
+    pub async fn async_get_ghostdag_data_batch(&self, hashes: Vec<Hash>) -> ConsensusResult<Vec<ExternalGhostdagData>> {
+        self.clone().spawn_blocking(move |c| c.get_ghostdag_data_batch(hashes)).await
+    }
+
     pub async fn async_get_block_children(&self, hash: Hash) -> Option<Vec<Hash>> {
         self.clone().spawn_blocking(move |c| c.get_block_children(hash)).await
     }

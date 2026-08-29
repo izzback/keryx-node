@@ -233,6 +233,12 @@ pub trait GhostdagStoreReader {
     /// Returns full block data for the requested hash
     fn get_data(&self, hash: Hash) -> Result<Arc<GhostdagData>, StoreError>;
 
+    /// Returns one ordered slot per requested hash. `None` means the hash has no full Ghostdag
+    /// record. Implementations may override this to use a native database batch read.
+    fn get_data_batch(&self, hashes: &[Hash]) -> Result<Vec<Option<Arc<GhostdagData>>>, StoreError> {
+        hashes.iter().copied().map(|hash| if self.has(hash)? { self.get_data(hash).map(Some) } else { Ok(None) }).collect()
+    }
+
     fn get_compact_data(&self, hash: Hash) -> Result<CompactGhostdagData, StoreError>;
 
     /// Check if the store contains data for the requested hash
@@ -353,6 +359,10 @@ impl GhostdagStoreReader for DbGhostdagStore {
 
     fn get_data(&self, hash: Hash) -> Result<Arc<GhostdagData>, StoreError> {
         self.access.read(hash)
+    }
+
+    fn get_data_batch(&self, hashes: &[Hash]) -> Result<Vec<Option<Arc<GhostdagData>>>, StoreError> {
+        self.access.read_many(hashes).map(|(values, _, _)| values)
     }
 
     fn get_compact_data(&self, hash: Hash) -> Result<CompactGhostdagData, StoreError> {

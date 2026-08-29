@@ -374,6 +374,12 @@ pub trait ConsensusApi: Send + Sync {
         unimplemented!()
     }
 
+    /// Returns Ghostdag data in exactly the same order as `hashes`. The first hash with a missing
+    /// or invalid status retains the same error semantics as `get_ghostdag_data`.
+    fn get_ghostdag_data_batch(&self, hashes: Vec<Hash>) -> ConsensusResult<Vec<ExternalGhostdagData>> {
+        unimplemented!()
+    }
+
     fn get_block_children(&self, hash: Hash) -> Option<Vec<Hash>> {
         unimplemented!()
     }

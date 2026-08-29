@@ -1465,8 +1465,14 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
             if headers.len() != chunk.len() {
                 return Err(ProtocolError::Other("consensus returned a truncated trusted-header batch"));
             }
+            let ghostdags = consensus.async_get_ghostdag_data_batch(chunk.to_vec()).await.map_err(|err| {
+                ProtocolError::OtherOwned(format!("syncee inconsistency: missing trusted Ghostdag data in batch, err: {}", err))
+            })?;
+            if ghostdags.len() != chunk.len() {
+                return Err(ProtocolError::Other("consensus returned a truncated trusted-Ghostdag batch"));
+            }
 
-            for (&hash, blk_header) in chunk.iter().zip(headers.into_iter()) {
+            for ((&hash, blk_header), ghostdag) in chunk.iter().zip(headers.into_iter()).zip(ghostdags.into_iter()) {
                 if blk_header.hash != hash {
                     return Err(ProtocolError::OtherOwned(format!(
                         "consensus returned header {} while trusted body {} was requested",
@@ -1490,11 +1496,7 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                 // TODO (relaxed): sending ghostdag data may be redundant, especially when the headers were already verified.
                 // Consider sending empty ghostdag data, simplifying a great deal. The result should be the same -
                 // a trusted task is sent, however the header is already verified, and hence only the block body will be verified.
-                jobs.push(
-                    consensus
-                        .validate_and_insert_trusted_block(TrustedBlock::new(block, consensus.async_get_ghostdag_data(hash).await?))
-                        .virtual_state_task,
-                );
+                jobs.push(consensus.validate_and_insert_trusted_block(TrustedBlock::new(block, ghostdag)).virtual_state_task);
             }
             try_join_all(jobs).await?; // TODO (relaxed): be more efficient with batching as done with block bodies in general
         }
@@ -1518,8 +1520,14 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                 ))
                 .await?;
             let mut jobs = Vec::with_capacity(chunk.len());
+            let ghostdags = consensus.async_get_ghostdag_data_batch(chunk.to_vec()).await.map_err(|err| {
+                ProtocolError::OtherOwned(format!("syncee inconsistency: missing trusted Ghostdag data in batch, err: {}", err))
+            })?;
+            if ghostdags.len() != chunk.len() {
+                return Err(ProtocolError::Other("consensus returned a truncated trusted-Ghostdag batch"));
+            }
 
-            for &hash in chunk.iter() {
+            for (&hash, ghostdag) in chunk.iter().zip(ghostdags.into_iter()) {
                 // TODO: change to BodyOnly requests when incorporated
                 let msg = dequeue_with_timeout!(self.incoming_route, Payload::IbdBlock)?;
                 let mut block: Block = Versioned(self.header_format, msg).try_into()?;
@@ -1536,11 +1544,7 @@ staging selected tip ({}) is too small or negative. Aborting IBD...",
                 // TODO (relaxed): sending ghostdag data may be redundant, especially when the headers were already verified.
                 // Consider sending empty ghostdag data, simplifying a great deal. The result should be the same -
                 // a trusted task is sent, however the header is already verified, and hence only the block body will be verified.
-                jobs.push(
-                    consensus
-                        .validate_and_insert_trusted_block(TrustedBlock::new(block, consensus.async_get_ghostdag_data(hash).await?))
-                        .virtual_state_task,
-                );
+                jobs.push(consensus.validate_and_insert_trusted_block(TrustedBlock::new(block, ghostdag)).virtual_state_task);
             }
             try_join_all(jobs).await?; // TODO (relaxed): be more efficient with batching as done with block bodies in general
         }

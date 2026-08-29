@@ -1483,6 +1483,26 @@ impl ConsensusApi for Consensus {
         Ok((&*ghostdag).into())
     }
 
+    fn get_ghostdag_data_batch(&self, hashes: Vec<Hash>) -> ConsensusResult<Vec<ExternalGhostdagData>> {
+        for &hash in &hashes {
+            match self.get_block_status(hash) {
+                None => return Err(ConsensusError::HeaderNotFound(hash)),
+                Some(BlockStatus::StatusInvalid) => return Err(ConsensusError::InvalidBlock(hash)),
+                _ => {}
+            }
+        }
+
+        let ghostdags = self.ghostdag_store.get_data_batch(&hashes).unwrap();
+        hashes
+            .into_iter()
+            .zip(ghostdags)
+            .map(|(hash, ghostdag)| {
+                let ghostdag = ghostdag.ok_or(ConsensusError::MissingData(hash))?;
+                Ok((&*ghostdag).into())
+            })
+            .collect()
+    }
+
     fn get_block_children(&self, hash: Hash) -> Option<Vec<Hash>> {
         self.services
             .relations_service
