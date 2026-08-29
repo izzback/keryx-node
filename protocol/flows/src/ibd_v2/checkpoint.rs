@@ -270,7 +270,7 @@ fn temporary_path(target: &Path, parent: &Path) -> PathBuf {
 }
 
 #[cfg(windows)]
-fn replace_file_atomic(replacement: &Path, target: &Path) -> io::Result<()> {
+pub(super) fn replace_file_atomic(replacement: &Path, target: &Path) -> io::Result<()> {
     use std::{ffi::c_void, os::windows::ffi::OsStrExt};
 
     #[link(name = "kernel32")]
@@ -298,7 +298,7 @@ fn replace_file_atomic(replacement: &Path, target: &Path) -> io::Result<()> {
 }
 
 #[cfg(not(windows))]
-fn replace_file_atomic(replacement: &Path, target: &Path) -> io::Result<()> {
+pub(super) fn replace_file_atomic(replacement: &Path, target: &Path) -> io::Result<()> {
     fs::rename(replacement, target)
 }
 

@@ -14,6 +14,7 @@ use std::{
     path::{Path, PathBuf},
 };
 use thiserror::Error;
+use uuid::Uuid;
 
 const MAGIC: [u8; 8] = *b"KXSSV2\0\0";
 const FORMAT_VERSION: u16 = 1;
@@ -175,6 +176,51 @@ impl ServiceStateSpool {
         }
 
         self.metadata = next_metadata;
+        Ok(self.metadata)
+    }
+
+    /// Replaces the durable spool with an empty, fully checksummed spool for the same
+    /// network and pruning point. The replacement is written and fsynced before the
+    /// old file is atomically replaced, so a legacy peer can safely restart from row 0.
+    pub fn reset(&mut self) -> Result<ServiceStateResumeMetadata, ServiceStateSpoolError> {
+        let parent = self.path.parent().filter(|parent| !parent.as_os_str().is_empty()).unwrap_or_else(|| Path::new("."));
+        let file_name = self.path.file_name().and_then(|name| name.to_str()).unwrap_or("service-state.spool");
+        let replacement_path = parent.join(format!(".{file_name}.{}.reset", Uuid::new_v4()));
+        let placeholder_path = parent.join(format!(".{file_name}.{}.placeholder", Uuid::new_v4()));
+
+        let mut replacement = OpenOptions::new().read(true).write(true).create_new(true).open(&replacement_path)?;
+        if let Err(error) = write_header(&mut replacement, self.genesis_hash, self.pruning_point) {
+            drop(replacement);
+            let _ = fs::remove_file(&replacement_path);
+            return Err(error);
+        }
+        drop(replacement);
+
+        // Close the currently open target before ReplaceFileW on Windows while keeping
+        // `self.file` initialized. The placeholder is never part of the durable state.
+        let placeholder = OpenOptions::new().read(true).write(true).create_new(true).open(&placeholder_path)?;
+        let old_file = std::mem::replace(&mut self.file, placeholder);
+        drop(old_file);
+
+        if let Err(error) = super::checkpoint::replace_file_atomic(&replacement_path, &self.path) {
+            if let Ok(reopened) = OpenOptions::new().read(true).write(true).open(&self.path) {
+                let placeholder = std::mem::replace(&mut self.file, reopened);
+                drop(placeholder);
+            }
+            let _ = fs::remove_file(&replacement_path);
+            let _ = fs::remove_file(&placeholder_path);
+            return Err(error.into());
+        }
+        sync_parent_directory(parent)?;
+
+        let reopened = OpenOptions::new().read(true).write(true).open(&self.path)?;
+        let placeholder = std::mem::replace(&mut self.file, reopened);
+        drop(placeholder);
+        let _ = fs::remove_file(&placeholder_path);
+
+        self.metadata = ServiceStateResumeMetadata::new(self.pruning_point);
+        self.truncated_tail_on_open = false;
+        self.file.seek(SeekFrom::End(0))?;
         Ok(self.metadata)
     }
 
@@ -439,6 +485,26 @@ mod tests {
         assert_eq!(reopened.metadata().next_cursor, 3);
         assert_eq!(reopened.metadata().chunk_count, 2);
         assert_eq!(reopened.read_all_rows().unwrap(), vec![b"row-a".to_vec(), b"row-b".to_vec(), b"row-c".to_vec()]);
+        drop(reopened);
+        fs::remove_dir_all(path.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn reset_replaces_durable_rows_and_restarts_cursor_from_zero() {
+        let path = test_path();
+        let mut spool = ServiceStateSpool::open(&path, hash(1), hash(2)).unwrap();
+        spool.append_chunk(0, 2, &[b"old-a".to_vec(), b"old-b".to_vec()]).unwrap();
+        assert_eq!(spool.metadata().next_cursor, 2);
+
+        let reset = spool.reset().unwrap();
+        assert_eq!(reset.next_cursor, 0);
+        assert_eq!(spool.read_all_rows().unwrap(), Vec::<Vec<u8>>::new());
+        spool.append_chunk(0, 1, &[b"new-a".to_vec()]).unwrap();
+        drop(spool);
+
+        let mut reopened = ServiceStateSpool::open(&path, hash(1), hash(2)).unwrap();
+        assert_eq!(reopened.metadata().next_cursor, 1);
+        assert_eq!(reopened.read_all_rows().unwrap(), vec![b"new-a".to_vec()]);
         drop(reopened);
         fs::remove_dir_all(path.parent().unwrap()).unwrap();
     }

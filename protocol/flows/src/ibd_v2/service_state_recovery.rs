@@ -105,6 +105,26 @@ impl ServiceStateRecovery {
         self.stage_status() == StageStatus::Committed
     }
 
+    pub fn restart_download_from_zero(&mut self) -> Result<(), ServiceStateRecoveryError> {
+        if self.stage_status() != StageStatus::Downloading {
+            return Err(ServiceStateRecoveryError::InvalidStage(self.stage_status()));
+        }
+
+        let empty = ServiceStateResumeMetadata::new(self.spool.pruning_point());
+        self.checkpoint.service_state = Some(empty);
+        self.checkpoint
+            .set_stage(StageProgress::new(Stage::ServiceState).with_status(StageStatus::Downloading).with_progress(0, None));
+        self.persist()?;
+        super::fault_injection::crash_if_requested("service-state-before-legacy-reset");
+
+        let durable = self.spool.reset()?;
+        if durable != empty {
+            return Err(ServiceStateSpoolError::MetadataMismatch.into());
+        }
+        super::fault_injection::crash_if_requested("service-state-after-legacy-reset");
+        Ok(())
+    }
+
     pub fn append_chunk(
         &mut self,
         start_cursor: u64,
@@ -266,6 +286,25 @@ mod tests {
         let mut reopened = ServiceStateRecovery::open(&root, hash(1), hash(2)).unwrap();
         assert_eq!(reopened.metadata().next_cursor, 2);
         assert_eq!(reopened.read_all_rows().unwrap(), vec![b"a".to_vec(), b"b".to_vec()]);
+        drop(reopened);
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn legacy_restart_discards_partial_cursor_before_accepting_row_zero() {
+        let root = test_root();
+        let mut recovery = ServiceStateRecovery::arm(&root, hash(1), hash(2)).unwrap();
+        recovery.append_chunk(0, 2, &[b"old-a".to_vec(), b"old-b".to_vec()]).unwrap();
+        assert_eq!(recovery.metadata().next_cursor, 2);
+
+        recovery.restart_download_from_zero().unwrap();
+        assert_eq!(recovery.metadata().next_cursor, 0);
+        recovery.append_chunk(0, 1, &[b"fresh".to_vec()]).unwrap();
+        drop(recovery);
+
+        let mut reopened = ServiceStateRecovery::open(&root, hash(1), hash(2)).unwrap();
+        assert_eq!(reopened.metadata().next_cursor, 1);
+        assert_eq!(reopened.read_all_rows().unwrap(), vec![b"fresh".to_vec()]);
         drop(reopened);
         fs::remove_dir_all(root).unwrap();
     }

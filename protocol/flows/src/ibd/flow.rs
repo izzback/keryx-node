@@ -5,7 +5,7 @@ use crate::{
     ibd_v2::{
         metrics::{StageMetrics, metrics_enabled},
         pom_plan::{PomBodyPlan, classify_pom_body},
-        service_state::ServiceStateWireTracker,
+        service_state::{ServiceStateWireMode, ServiceStateWireTracker},
         service_state_recovery::ServiceStateRecovery,
         stage_tracking::IbdStageTracker,
         state::Stage,
@@ -982,6 +982,7 @@ impl IbdFlow {
         } else {
             recovery.as_ref().map(|recovery| ServiceStateWireTracker::from_metadata(recovery.metadata()))
         };
+        let mut legacy_wire_started = false;
 
         if !verified_replay {
             loop {
@@ -1021,22 +1022,60 @@ impl IbdFlow {
                             }
 
                             if let Some(recovery) = &mut recovery {
-                                let chunk_start = chunk
-                                    .start_cursor
-                                    .ok_or(ProtocolError::Other("IBD v2 service-state chunk is missing start cursor"))?;
-                                let chunk_next = chunk
-                                    .next_cursor
-                                    .ok_or(ProtocolError::Other("IBD v2 service-state chunk is missing next cursor"))?;
+                                let wire_mode = resume_tracker
+                                    .as_ref()
+                                    .map(ServiceStateWireTracker::mode)
+                                    .ok_or(ProtocolError::Other("IBD v2 service-state wire tracker is missing"))?;
                                 let storage_started = metrics_enabled().then(Instant::now);
-                                let durable = recovery.append_chunk(chunk_start, chunk_next, &chunk.rows).map_err(|err| {
-                                    ProtocolError::OtherOwned(format!("failed to persist IBD v2 service-state chunk: {err}"))
-                                })?;
-                                if let Some(tracker) = &resume_tracker
-                                    && tracker.metadata() != durable
-                                {
-                                    return Err(ProtocolError::Other(
-                                        "IBD v2 service-state wire cursor diverged from durable spool cursor",
-                                    ));
+                                match wire_mode {
+                                    ServiceStateWireMode::Resumable => {
+                                        let chunk_start = chunk
+                                            .start_cursor
+                                            .ok_or(ProtocolError::Other("IBD v2 service-state chunk is missing start cursor"))?;
+                                        let chunk_next = chunk
+                                            .next_cursor
+                                            .ok_or(ProtocolError::Other("IBD v2 service-state chunk is missing next cursor"))?;
+                                        let durable = recovery.append_chunk(chunk_start, chunk_next, &chunk.rows).map_err(|err| {
+                                            ProtocolError::OtherOwned(format!("failed to persist IBD v2 service-state chunk: {err}"))
+                                        })?;
+                                        if let Some(tracker) = &resume_tracker
+                                            && tracker.metadata() != durable
+                                        {
+                                            return Err(ProtocolError::Other(
+                                                "IBD v2 service-state wire cursor diverged from durable spool cursor",
+                                            ));
+                                        }
+                                    }
+                                    ServiceStateWireMode::Legacy => {
+                                        if !legacy_wire_started {
+                                            if recovery.metadata().next_cursor > 0 {
+                                                info!(
+                                                    "peer {} uses legacy service-state wire format; restarting durable IBD v2 service-state download from row 0",
+                                                    self.router
+                                                );
+                                                recovery.restart_download_from_zero().map_err(|err| {
+                                                    ProtocolError::OtherOwned(format!(
+                                                        "failed to restart IBD v2 service-state download for legacy peer: {err}"
+                                                    ))
+                                                })?;
+                                            }
+                                            legacy_wire_started = true;
+                                        }
+                                        let chunk_start = recovery.metadata().next_cursor;
+                                        let chunk_next = chunk_start
+                                            .checked_add(chunk.rows.len() as u64)
+                                            .ok_or(ProtocolError::Other("IBD v2 service-state legacy cursor overflow"))?;
+                                        recovery.append_chunk(chunk_start, chunk_next, &chunk.rows).map_err(|err| {
+                                            ProtocolError::OtherOwned(format!(
+                                                "failed to persist legacy IBD v2 service-state chunk: {err}"
+                                            ))
+                                        })?;
+                                    }
+                                    ServiceStateWireMode::Unknown => {
+                                        return Err(ProtocolError::Other(
+                                            "IBD v2 service-state wire mode remained unknown after a chunk",
+                                        ));
+                                    }
                                 }
                                 if let Some(storage_started) = storage_started {
                                     metrics.record_storage_time(storage_started.elapsed());
@@ -1051,12 +1090,37 @@ impl IbdFlow {
                                 tracker.accept_done(done_pruning_point, done.next_cursor).map_err(|err| {
                                     ProtocolError::OtherOwned(format!("invalid IBD v2 service-state completion metadata: {err:?}"))
                                 })?;
-                                if let Some(recovery) = &recovery
-                                    && tracker.metadata() != recovery.metadata()
-                                {
-                                    return Err(ProtocolError::Other(
-                                        "IBD v2 service-state completion cursor diverged from durable spool cursor",
-                                    ));
+                                match tracker.mode() {
+                                    ServiceStateWireMode::Resumable => {
+                                        if let Some(recovery) = &recovery
+                                            && tracker.metadata() != recovery.metadata()
+                                        {
+                                            return Err(ProtocolError::Other(
+                                                "IBD v2 service-state completion cursor diverged from durable spool cursor",
+                                            ));
+                                        }
+                                    }
+                                    ServiceStateWireMode::Legacy => {
+                                        if let Some(recovery) = &mut recovery
+                                            && !legacy_wire_started
+                                            && recovery.metadata().next_cursor > 0
+                                        {
+                                            info!(
+                                                "peer {} completed an empty legacy service-state stream; discarding stale resumable progress",
+                                                self.router
+                                            );
+                                            recovery.restart_download_from_zero().map_err(|err| {
+                                                ProtocolError::OtherOwned(format!(
+                                                    "failed to restart empty legacy IBD v2 service-state download: {err}"
+                                                ))
+                                            })?;
+                                        }
+                                    }
+                                    ServiceStateWireMode::Unknown => {
+                                        return Err(ProtocolError::Other(
+                                            "IBD v2 service-state wire mode remained unknown at completion",
+                                        ));
+                                    }
                                 }
                             }
                             break;
