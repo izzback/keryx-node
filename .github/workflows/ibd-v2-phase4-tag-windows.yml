@@ -38,9 +38,11 @@ jobs:
           git cat-file -e "$expected^{commit}"
           if ($LASTEXITCODE -ne 0) { throw "Phase 4.4 functional commit $expected is unavailable" }
 
-          $existing = (git tag --list $tag).Trim()
+          $existingLines = @(git tag --list $tag)
+          if ($LASTEXITCODE -ne 0) { throw 'git tag --list failed' }
+          $existing = if ($existingLines.Count -gt 0) { [string]$existingLines[0] } else { '' }
           if ($existing) {
-            $actual = (git rev-list -n 1 $tag).Trim()
+            $actual = ([string](git rev-list -n 1 $tag)).Trim()
             if ($actual -ne $expected) {
               throw "existing tag $tag points to $actual instead of $expected"
             }
@@ -55,7 +57,7 @@ jobs:
           git push origin "refs/tags/$tag"
           if ($LASTEXITCODE -ne 0) { throw 'git push tag failed' }
 
-          $actual = (git rev-list -n 1 $tag).Trim()
+          $actual = ([string](git rev-list -n 1 $tag)).Trim()
           if ($actual -ne $expected) { throw "published tag resolves to $actual instead of $expected" }
           Write-Host "PHASE4_4_FREEZE_TAG=$tag"
           Write-Host "PHASE4_4_FUNCTIONAL_COMMIT=$actual"
