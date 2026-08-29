@@ -129,6 +129,8 @@ jobs:
           $ErrorActionPreference = 'Stop'
           $statuses = [IO.File]::ReadAllText((Resolve-Path 'consensus/src/model/stores/statuses.rs'))
           if (-not $statuses.Contains('self.access.read_many(hashes)')) { throw 'status read_many guard missing' }
+          $statusService = [IO.File]::ReadAllText((Resolve-Path 'consensus/src/model/services/statuses.rs'))
+          if (-not $statusService.Contains('self.store.read().get_many(hashes)')) { throw 'status service batch forwarding guard missing' }
           $consensus = [IO.File]::ReadAllText((Resolve-Path 'consensus/src/consensus/mod.rs'))
           foreach ($needle in @(
             'hashes.iter().zip(self.get_block_statuses(&hashes))',
@@ -157,6 +159,7 @@ jobs:
           $expected = @(
             'consensus/core/src/api/mod.rs',
             'consensus/src/consensus/mod.rs',
+            'consensus/src/model/services/statuses.rs',
             'consensus/src/model/stores/statuses.rs'
           )
           $changed = @(git diff --name-only)
