@@ -129,39 +129,33 @@ jobs:
         run: |
           $ErrorActionPreference = 'Stop'
           $parent = $env:IBD_V2_STABLE_SHA
-          $paths = @(
-            'components/consensusmanager/src/session.rs',
-            'consensus/core/src/api/mod.rs',
-            'consensus/core/src/collateral.rs',
-            'consensus/core/src/config/params.rs',
-            'consensus/core/src/errors/block.rs',
-            'consensus/src/bin/dump_service_state.rs',
-            'consensus/src/consensus/mod.rs',
-            'consensus/src/consensus/storage.rs',
-            'consensus/src/model/stores/mod.rs',
-            'consensus/src/model/stores/service_ledger_snapshot.rs',
-            'consensus/src/pipeline/virtual_processor/processor.rs',
-            'consensus/src/pipeline/virtual_processor/service_bond.rs',
-            'consensus/src/pipeline/virtual_processor/tests.rs',
-            'consensus/src/pipeline/virtual_processor/utxo_validation.rs',
-            'consensus/src/processes/pruning.rs',
-            'database/src/registry.rs'
-          )
-          $tmp = Join-Path $env:RUNNER_TEMP 'ibd-v2-format-parent'
-          if (Test-Path $tmp) { Remove-Item $tmp -Recurse -Force }
-          New-Item -ItemType Directory -Path $tmp -Force | Out-Null
-          foreach ($path in $paths) {
-            rustfmt --edition 2024 --check --config skip_children=true $path 2>$null
-            $headFmt = $LASTEXITCODE
-            if ($headFmt -eq 0) { continue }
-            $safe = ($path -replace '[\\/:*?"<>|]', '_') + '.rs'
-            $parentTmp = Join-Path $tmp $safe
-            $parentText = git show "$parent`:$path" 2>$null
-            if ($LASTEXITCODE -ne 0) { throw "new file fails rustfmt: $path" }
-            $parentText | Set-Content -LiteralPath $parentTmp -Encoding UTF8
-            rustfmt --edition 2024 --check --config skip_children=true $parentTmp 2>$null
-            if ($LASTEXITCODE -eq 0) { throw "new rustfmt regression introduced by candidate: $path" }
-            Write-Warning "confirmed inherited rustfmt debt in $path"
+          $source = $env:IBD_V2_CANDIDATE_SHA
+          $parentTree = Join-Path $env:RUNNER_TEMP 'ibd-v2-format-parent-worktree'
+          if (Test-Path $parentTree) { Remove-Item $parentTree -Recurse -Force }
+          git worktree prune
+          git worktree add --detach $parentTree $parent
+          if ($LASTEXITCODE -ne 0) { throw 'failed to create parent worktree for rustfmt baseline' }
+          try {
+            $changedRust = @(git diff --name-only "$parent..$source" -- '*.rs')
+            foreach ($path in $changedRust) {
+              rustfmt --edition 2024 --check --config skip_children=true $path 2>$null
+              $candidateStatus = $LASTEXITCODE
+              if ($candidateStatus -eq 0) { continue }
+
+              $parentPath = Join-Path $parentTree ($path -replace '/', [IO.Path]::DirectorySeparatorChar)
+              if (-not (Test-Path -LiteralPath $parentPath)) {
+                throw "new Rust file fails rustfmt: $path"
+              }
+
+              rustfmt --edition 2024 --check --config skip_children=true $parentPath 2>$null
+              $parentStatus = $LASTEXITCODE
+              if ($parentStatus -eq 0) {
+                throw "new rustfmt regression introduced by candidate: $path"
+              }
+              Write-Warning "confirmed inherited rustfmt debt in $path"
+            }
+          } finally {
+            git worktree remove --force $parentTree
           }
           if (@(git status --porcelain).Count -ne 0) { throw 'format checks dirtied source tree' }
 
