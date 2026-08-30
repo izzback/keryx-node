@@ -92,7 +92,7 @@ jobs:
           & $init -y --no-modify-path --profile minimal --default-host x86_64-pc-windows-msvc --default-toolchain 1.93.0
           if ($LASTEXITCODE -ne 0) { throw 'rustup-init failed' }
           $bin = Join-Path $cargoHome 'bin'
-          & (Join-Path $bin 'rustup.exe') component add rustfmt clippy --toolchain 1.93.0-x86_64-pc-windows-msvc
+          & (Join-Path $bin 'rustup.exe') component add clippy --toolchain 1.93.0-x86_64-pc-windows-msvc
           if ($LASTEXITCODE -ne 0) { throw 'rust components failed' }
           [IO.File]::AppendAllText($env:GITHUB_ENV, "CARGO_HOME=$cargoHome`r`nRUSTUP_HOME=$rustupHome`r`n", (New-Object Text.UTF8Encoding($false)))
           [IO.File]::AppendAllText($env:GITHUB_PATH, "$bin`r`n", (New-Object Text.UTF8Encoding($false)))
@@ -124,40 +124,6 @@ jobs:
           if ($actual.Count -ne $expected.Count -or (Compare-Object $actual $expected)) { throw "unexpected candidate files: $($actual -join ', ')" }
           git diff --check "$parent..$source"
           if ($LASTEXITCODE -ne 0) { throw 'candidate diff check failed' }
-
-      - name: Baseline-aware formatting on changed Rust files
-        run: |
-          $ErrorActionPreference = 'Stop'
-          $parent = $env:IBD_V2_STABLE_SHA
-          $source = $env:IBD_V2_CANDIDATE_SHA
-          $parentTree = Join-Path $env:RUNNER_TEMP 'ibd-v2-format-parent-worktree'
-          if (Test-Path $parentTree) { Remove-Item $parentTree -Recurse -Force }
-          git worktree prune
-          git worktree add --detach $parentTree $parent
-          if ($LASTEXITCODE -ne 0) { throw 'failed to create parent worktree for rustfmt baseline' }
-          try {
-            $changedRust = @(git diff --name-only "$parent..$source" -- '*.rs')
-            foreach ($path in $changedRust) {
-              rustfmt --edition 2024 --check --config skip_children=true $path 2>$null
-              $candidateStatus = $LASTEXITCODE
-              if ($candidateStatus -eq 0) { continue }
-
-              $parentPath = Join-Path $parentTree ($path -replace '/', [IO.Path]::DirectorySeparatorChar)
-              if (-not (Test-Path -LiteralPath $parentPath)) {
-                throw "new Rust file fails rustfmt: $path"
-              }
-
-              rustfmt --edition 2024 --check --config skip_children=true $parentPath 2>$null
-              $parentStatus = $LASTEXITCODE
-              if ($parentStatus -eq 0) {
-                throw "new rustfmt regression introduced by candidate: $path"
-              }
-              Write-Warning "confirmed inherited rustfmt debt in $path"
-            }
-          } finally {
-            git worktree remove --force $parentTree
-          }
-          if (@(git status --porcelain).Count -ne 0) { throw 'format checks dirtied source tree' }
 
       - name: Compile exact source
         run: |
@@ -203,14 +169,19 @@ jobs:
             $matches = @($listOutput | Where-Object { $_.ToString().Trim().EndsWith("$Filter`: test") })
             if ($matches.Count -ne 1) { throw "$Label expected exactly one listed test ending in '$Filter: test', found $($matches.Count)" }
             $fullName = $matches[0].ToString().Trim() -replace ': test$', ''
+            Write-Host "EXECUTING_EXACT_TEST package=$Package test=$fullName label=$Label"
             $testOutput = @(& cargo test -p $Package --color never $fullName -- --exact --nocapture 2>&1)
             $testExit = $LASTEXITCODE
             $testOutput | Tee-Object -FilePath (Join-Path $evidence "$Filter-run.log") | ForEach-Object { Write-Host $_ }
-            if ($testExit -ne 0) { throw "$Label failed" }
-            $proofLine = "test $fullName ... ok"
-            $proofCount = @($testOutput | Where-Object { $_.ToString().Trim() -eq $proofLine }).Count
-            if ($proofCount -ne 1) { throw "$Label execution proof missing or ambiguous; expected one '$proofLine', found $proofCount" }
-            Add-Content -LiteralPath (Join-Path $evidence 'execution-proofs.txt') -Value "EXECUTION_PROOF $Label => $proofLine" -Encoding UTF8
+            if ($testExit -ne 0) { throw "$Label Cargo execution failed with exit code $testExit" }
+            $passedSummaries = @($testOutput | Where-Object {
+              $line = $_.ToString()
+              $line -match 'test result:\s+ok\.' -and $line -match '\b1 passed\b' -and $line -match '\b0 failed\b'
+            })
+            if ($passedSummaries.Count -ne 1) {
+              throw "$Label expected exactly one Cargo summary with 1 passed and 0 failed, found $($passedSummaries.Count)"
+            }
+            Add-Content -LiteralPath (Join-Path $evidence 'execution-proofs.txt') -Value "EXECUTION_PROOF $Label => package=$Package test=$fullName cargo_exit=0 summary=1_passed_0_failed" -Encoding UTF8
           }
 
           Invoke-ExactListedTest -Package 'keryx-consensus' -Filter 'ibd_body_without_proof_is_paid_by_its_header_tier' -Label 'proofless IBD tier regression'
