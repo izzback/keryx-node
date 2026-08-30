@@ -1,0 +1,106 @@
+name: IBD V2 Candidate Qualification
+
+on:
+  push:
+    branches:
+      - ibd-v2-dev
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  IBD_V2_CANDIDATE_SHA: 663db294e16edf9cd8fd0af3cd0a44f3abebcf09
+  IBD_V2_STABLE_SHA: ad3d8cc0be07909a2a0bebb37c525ddad21fe559
+
+jobs:
+  qualify-ibd-v2-dev:
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - name: Checkout qualification trigger
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Enforce branch, candidate and CI-only ancestry
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "${GITHUB_REF_NAME}" = "ibd-v2-dev"
+
+          git fetch origin ibd-v2-stable ibd-v2-dev
+          stable_remote_sha="$(git rev-parse origin/ibd-v2-stable)"
+          dev_remote_sha="$(git rev-parse origin/ibd-v2-dev)"
+
+          test "${stable_remote_sha}" = "${IBD_V2_STABLE_SHA}"
+          test "$(git rev-parse "${IBD_V2_CANDIDATE_SHA}^")" = "${IBD_V2_STABLE_SHA}"
+          test "$(git merge-base "${IBD_V2_STABLE_SHA}" "${IBD_V2_CANDIDATE_SHA}")" = "${IBD_V2_STABLE_SHA}"
+          git merge-base --is-ancestor "${IBD_V2_CANDIDATE_SHA}" "${dev_remote_sha}"
+
+          non_ci_changes="$(git diff --name-only "${IBD_V2_CANDIDATE_SHA}..${dev_remote_sha}" | grep -vE '^\.github/workflows/' || true)"
+          if [ -n "${non_ci_changes}" ]; then
+            echo "Non-CI changes detected after functional candidate ${IBD_V2_CANDIDATE_SHA}:" >&2
+            printf '%s\n' "${non_ci_changes}" >&2
+            exit 1
+          fi
+
+          git checkout --detach "${IBD_V2_CANDIDATE_SHA}"
+          test "$(git rev-parse HEAD)" = "${IBD_V2_CANDIDATE_SHA}"
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt, clippy
+
+      - name: Configure Rust cache
+        uses: Swatinem/rust-cache@v2
+
+      - name: Cargo metadata
+        run: cargo metadata --format-version 1 --no-deps > /tmp/ibd-v2-cargo-metadata.json
+
+      - name: cargo fmt --check
+        run: cargo fmt --all -- --check
+
+      - name: cargo clippy --all-targets --all-features -- -D warnings
+        run: cargo clippy --all-targets --all-features -- -D warnings
+
+      - name: Run targeted snapshot and IBD regressions with execution proof
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/ibd-v2-qualification
+
+          run_targeted_test() {
+            local package="$1"
+            local test_name="$2"
+            local log="/tmp/ibd-v2-qualification/${package}-${test_name}.log"
+
+            cargo test --color never -p "${package}" "${test_name}" -- --nocapture 2>&1 | tee "${log}"
+
+            if ! grep -E "^test ([^[:space:]]*::)*${test_name} \.\.\. ok$" "${log}"; then
+              echo "Execution proof missing for ${package}::${test_name}" >&2
+              exit 1
+            fi
+          }
+
+          run_targeted_test kaspa-consensus-client service_state_check_skips_pruning_points_below_the_snapshot_floor
+          run_targeted_test kaspa-consensus ibd_body_without_proof_is_paid_by_its_header_tier
+          run_targeted_test kaspa-p2p-lib measure_and_report_bandwidth_is_cancellation_safe
+          run_targeted_test kaspad hotswitch_lifecycle_resets_stale_header_sync_state
+          run_targeted_test kaspad ibd_routing_failure_cleans_attempt_before_disconnect
+
+      - name: Record certified functional SHA
+        shell: bash
+        run: |
+          set -euo pipefail
+          printf '%s\n' "${IBD_V2_CANDIDATE_SHA}" | tee /tmp/ibd-v2-qualification/certified-functional-sha.txt
+          test "$(git rev-parse HEAD)" = "${IBD_V2_CANDIDATE_SHA}"
+
+      - name: Archive qualification evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ibd-v2-qualification-${{ env.IBD_V2_CANDIDATE_SHA }}-${{ github.run_id }}
+          path: /tmp/ibd-v2-qualification
+          if-no-files-found: error
