@@ -162,7 +162,7 @@ jobs:
               [Parameter(Mandatory=$true)][string]$Filter,
               [Parameter(Mandatory=$true)][string]$Label
             )
-            $listOutput = @(& cargo test -p $Package --color never -- --list 2>&1)
+            $listOutput = @(& cargo test -p $Package --color never -- --list)
             $listExit = $LASTEXITCODE
             $listOutput | Tee-Object -FilePath (Join-Path $evidence "$Filter-list.log") | ForEach-Object { Write-Host $_ }
             if ($listExit -ne 0) { throw "$Label test listing failed" }
@@ -170,7 +170,7 @@ jobs:
             if ($matches.Count -ne 1) { throw "$Label expected exactly one listed test ending in '${Filter}: test', found $($matches.Count)" }
             $fullName = $matches[0].ToString().Trim() -replace ': test$', ''
             Write-Host "EXECUTING_EXACT_TEST package=$Package test=$fullName label=$Label"
-            $testOutput = @(& cargo test -p $Package --color never $fullName -- --exact --nocapture 2>&1)
+            $testOutput = @(& cargo test -p $Package --color never $fullName -- --exact --nocapture)
             $testExit = $LASTEXITCODE
             $testOutput | Tee-Object -FilePath (Join-Path $evidence "$Filter-run.log") | ForEach-Object { Write-Host $_ }
             if ($testExit -ne 0) { throw "$Label Cargo execution failed with exit code $testExit" }
